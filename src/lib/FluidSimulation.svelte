@@ -21,6 +21,7 @@
 	let fluid: FlipFluid;
 	let renderer: FluidRenderer;
 	let animationId: number;
+	let isDragging = false;
 
 	let simHeight = 3.0;
 	let simWidth = 4.0;
@@ -34,7 +35,7 @@
 	const separateParticles = true;
 	const showParticles = true;
 	const showGrid = false;
-	const damping = 1.0;
+	const damping = 0.99;
 	const clickSpawnCount = 40;
 	const clickSpawnRadius = 0.12;
 	const clickSpawnSpeed = 0.0;
@@ -96,17 +97,71 @@
 	}
 
 	function spawnAtPointer(event: PointerEvent) {
-		if (!fluid || !canvas) return;
+        if (!fluid || !canvas) return;
 
-		const rect = canvas.getBoundingClientRect();
-		const nx = (event.clientX - rect.left) / rect.width;
-		const ny = (event.clientY - rect.top) / rect.height;
+        const rect = canvas.getBoundingClientRect();
+        const nx = (event.clientX - rect.left) / rect.width;
+        const ny = (event.clientY - rect.top) / rect.height;
 
-		const x = nx * simWidth;
-		const y = (1.0 - ny) * simHeight;
+        const x = nx * simWidth;
+        const y = (1.0 - ny) * simHeight;
 
-		fluid.numParticles += fluid.spawnParticlesInDisk(x, y, clickSpawnRadius, clickSpawnCount, clickSpawnSpeed);
-	}
+        fluid.spawnParticlesInRectangle(
+            x,
+            y,
+            clickSpawnRadius,
+            clickSpawnCount,
+            clickSpawnSpeed
+        );
+    }
+
+	onMount(() => {
+		let id: number | null = null;
+
+		const handlePointerDown = (event: PointerEvent) => {
+			isDragging = true;
+			canvas.setPointerCapture(event.pointerId);
+			id = setInterval(() => {
+				spawnAtPointer(event);
+			}, 50);
+		}
+		const handlePointerMove = (event: PointerEvent) => {
+			if (id !== null) {
+				clearInterval(id);
+			}
+			if (!isDragging) return;
+			spawnAtPointer(event);
+			id = setInterval(() => {
+				spawnAtPointer(event);
+			}, 50);
+		}
+	    const handlePointerUp = (event: PointerEvent) => {
+            isDragging = false;
+            canvas.releasePointerCapture(event.pointerId);
+			if (id !== null) {
+				clearInterval(id);
+			}
+        };
+
+        const handlePointerCancel = () => {
+            isDragging = false;
+			if (id !== null) {
+				clearInterval(id);
+			}
+        };
+
+        canvas.addEventListener('pointerdown', handlePointerDown);
+        canvas.addEventListener('pointermove', handlePointerMove);
+        canvas.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('pointercancel', handlePointerCancel);
+
+        return () => {
+            canvas.removeEventListener('pointerdown', handlePointerDown);
+            canvas.removeEventListener('pointermove', handlePointerMove);
+            canvas.removeEventListener('pointerup', handlePointerUp);
+            canvas.removeEventListener('pointercancel', handlePointerCancel);
+        };
+    });
 
 	onMount(() => {
 		resizeCanvas();
@@ -131,18 +186,13 @@
 		const handleResize = () => {
 			resizeCanvas();
 		};
-		const handlePointerDown = (event: PointerEvent) => {
-			spawnAtPointer(event);
-		};
 		window.addEventListener('resize', handleResize);
-		canvas.addEventListener('pointerdown', handlePointerDown);
 
 		// Start animation loop
 		update();
 
 		return () => {
 			window.removeEventListener('resize', handleResize);
-			canvas.removeEventListener('pointerdown', handlePointerDown);
 			if (animationId) {
 				cancelAnimationFrame(animationId);
 			}

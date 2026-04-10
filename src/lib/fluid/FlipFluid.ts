@@ -1,22 +1,30 @@
+import type { RGBColor, SolidCircle } from './fluidTypes';
+import { clamp, clamp01, sanitizeColor } from './fluidTypes';
+
 // Cell types
 export const FLUID_CELL = 0;
 export const AIR_CELL = 1;
 export const SOLID_CELL = 2;
 
-function clamp(x: number, min: number, max: number): number {
-    if (x < min) return min;
-    if (x > max) return max;
-    return x;
+export interface FluidStats {
+    particleCount: number;
+    fluidCells: number;
+    solidCells: number;
+    airCells: number;
+    averageParticleSpeed: number;
+    maxParticleSpeed: number;
+    restDensity: number;
 }
 
 export class FlipFluid {
-    name: string;
     density: number;
     fNumX: number;
     fNumY: number;
     h: number;
     fInvSpacing: number;
     fNumCells: number;
+
+    solidCircles: SolidCircle[];
 
     // Grid arrays
     u: Float32Array;
@@ -30,6 +38,10 @@ export class FlipFluid {
     cellType: Int32Array;
     cellColor: Float32Array;
 
+    // Backwards-compatible aliases for code that still refers to gridVelX/gridVelY.
+    gridVelX: Float32Array;
+    gridVelY: Float32Array;
+
     // Particle arrays
     maxParticles: number;
     particlePos: Float32Array;
@@ -40,7 +52,10 @@ export class FlipFluid {
     numParticles: number;
 
     // Colors
-    baseColor: { r: number; g: number; b: number };
+    baseColor: RGBColor;
+    foamColor: RGBColor;
+    colorDiffusionCoeff: number;
+    foamReturnRate: number;
 
     // Particle grid
     particleRadius: number;
@@ -53,16 +68,17 @@ export class FlipFluid {
     cellParticleIds: Int32Array;
 
     constructor(
-        name: string,
         density: number,
         width: number,
         height: number,
         spacing: number,
         particleRadius: number,
         maxParticles: number,
-        baseColor?: { r: number; g: number; b: number },
+        baseColor?: RGBColor,
+        foamColor?: RGBColor,
+        colorDiffusionCoeff = 0.01,
+        foamReturnRate = 1.0
     ) {
-        this.name = name;
         this.density = density;
         this.fNumX = Math.floor(width / spacing) + 1;
         this.fNumY = Math.floor(height / spacing) + 1;
@@ -70,7 +86,6 @@ export class FlipFluid {
         this.fInvSpacing = 1.0 / this.h;
         this.fNumCells = this.fNumX * this.fNumY;
 
-        // Initialize grid arrays
         this.u = new Float32Array(this.fNumCells);
         this.v = new Float32Array(this.fNumCells);
         this.du = new Float32Array(this.fNumCells);
@@ -82,28 +97,24 @@ export class FlipFluid {
         this.cellType = new Int32Array(this.fNumCells);
         this.cellColor = new Float32Array(3 * this.fNumCells);
 
-        // Initialize particle arrays
+        this.gridVelX = this.u;
+        this.gridVelY = this.v;
+
         this.maxParticles = maxParticles;
         this.particlePos = new Float32Array(2 * this.maxParticles);
         this.particleColor = new Float32Array(3 * this.maxParticles);
-
-        // Use provided base color or default to a deeper water-like blue
-        const defaultColor = { r: 0.06, g: 0.45, b: 0.9 };
-        const color = baseColor || defaultColor;
-        this.baseColor = { ...color };
-
-        for (let i = 0; i < this.maxParticles; i++) {
-            // Single base color for all particles
-            this.particleColor[3 * i] = color.r;
-            this.particleColor[3 * i + 1] = color.g;
-            this.particleColor[3 * i + 2] = color.b;
-        }
-
         this.particleVel = new Float32Array(2 * this.maxParticles);
         this.particleDensity = new Float32Array(this.fNumCells);
         this.particleRestDensity = 0.0;
 
-        // Initialize particle grid
+        const defaultColor = { r: 0.06, g: 0.45, b: 0.9 };
+        this.baseColor = sanitizeColor(baseColor || defaultColor);
+        this.foamColor = sanitizeColor(foamColor || { r: 0.7, g: 0.9, b: 1.0 });
+        this.colorDiffusionCoeff = clamp01(colorDiffusionCoeff);
+        this.foamReturnRate = Math.max(0, foamReturnRate);
+
+        this.initializeParticleColors(this.baseColor);
+
         this.particleRadius = particleRadius;
         this.pInvSpacing = 1.0 / (2.2 * particleRadius);
         this.pNumX = Math.floor(width * this.pInvSpacing) + 1;
@@ -114,33 +125,63 @@ export class FlipFluid {
         this.firstCellParticle = new Int32Array(this.pNumCells + 1);
         this.cellParticleIds = new Int32Array(maxParticles);
 
+        this.solidCircles = [];
         this.numParticles = 0;
     }
 
-    public getName(): string {
-        return this.name;
+    private initializeParticleColors(color: RGBColor): void {
+        for (let i = 0; i < this.maxParticles; i++) {
+            this.particleColor[3 * i] = color.r;
+            this.particleColor[3 * i + 1] = color.g;
+            this.particleColor[3 * i + 2] = color.b;
+        }
+    }
+
+    addSolidCircle(cx: number, cy: number, radius: number): void {
+        this.solidCircles.push({ x: cx, y: cy, radius });
+
+        const r2 = radius * radius;
+        const n = this.fNumY;
+
+        for (let i = 1; i < this.fNumX - 1; i++) {
+            for (let j = 1; j < this.fNumY - 1; j++) {
+                const x = (i + 0.5) * this.h;
+                const y = (j + 0.5) * this.h;
+                const dx = x - cx;
+                const dy = y - cy;
+
+                if (dx * dx + dy * dy <= r2) {
+                    const cell = i * n + j;
+                    this.s[cell] = 0.0;
+                    this.u[cell] = 0.0;
+                    this.v[cell] = 0.0;
+                }
+            }
+        }
+    }
+
+    clearSolidCircles(): void {
+        this.solidCircles.length = 0;
     }
 
     integrateParticles(dt: number, gravityX: number, gravityY: number, damping: number): void {
+        const safeDamping = clamp(damping, 0, 1);
+
         for (let i = 0; i < this.numParticles; i++) {
-            // Apply gravity
-            this.particleVel[2 * i] += dt * gravityX;     // Apply X component of gravity
-            this.particleVel[2 * i + 1] += dt * gravityY; // Apply Y component of gravity
+            this.particleVel[2 * i] += dt * gravityX;
+            this.particleVel[2 * i + 1] += dt * gravityY;
 
-            // Apply damping to reduce velocity over time
-            this.particleVel[2 * i] *= damping;
-            this.particleVel[2 * i + 1] *= damping;
+            this.particleVel[2 * i] *= safeDamping;
+            this.particleVel[2 * i + 1] *= safeDamping;
 
-            // Update positions
             this.particlePos[2 * i] += this.particleVel[2 * i] * dt;
             this.particlePos[2 * i + 1] += this.particleVel[2 * i + 1] * dt;
         }
     }
 
-    pushParticlesApart(numIters: number): void {
-
-        // Build spatial hash
+    private rebuildParticleGrid(): void {
         this.numCellParticles.fill(0);
+
         for (let i = 0; i < this.numParticles; i++) {
             const x = this.particlePos[2 * i];
             const y = this.particlePos[2 * i + 1];
@@ -166,6 +207,11 @@ export class FlipFluid {
             this.firstCellParticle[cellNr]--;
             this.cellParticleIds[this.firstCellParticle[cellNr]] = i;
         }
+    }
+
+    pushParticlesApart(numIters: number): void {
+        const colorDiffusionCoeff = this.colorDiffusionCoeff;
+        this.rebuildParticleGrid();
 
         const minDist = 2.0 * this.particleRadius;
         const minDist2 = minDist * minDist;
@@ -210,11 +256,12 @@ export class FlipFluid {
                             this.particlePos[2 * id] += deltaX;
                             this.particlePos[2 * id + 1] += deltaY;
 
-                            // Color mixing
                             for (let k = 0; k < 3; k++) {
                                 const color0 = this.particleColor[3 * i + k];
                                 const color1 = this.particleColor[3 * id + k];
                                 const color = (color0 + color1) * 0.5;
+                                this.particleColor[3 * i + k] = color0 + (color - color0) * colorDiffusionCoeff;
+                                this.particleColor[3 * id + k] = color1 + (color - color1) * colorDiffusionCoeff;
                             }
                         }
                     }
@@ -223,22 +270,8 @@ export class FlipFluid {
         }
     }
 
-    removeParticle(index: number): void {
-        if (index < 0 || index >= this.numParticles) return;
-        const last = this.numParticles - 1;
-        if (index !== last) {
-            // Swap position
-            this.particlePos[2 * index] = this.particlePos[2 * last];
-            this.particlePos[2 * index + 1] = this.particlePos[2 * last + 1];
-            // Swap velocity
-            this.particleVel[2 * index] = this.particleVel[2 * last];
-            this.particleVel[2 * index + 1] = this.particleVel[2 * last + 1];
-        }
-        this.numParticles--;
-    }
-
     handleParticleCollisions(): void {
-        const h = 1.0 / this.fInvSpacing;
+        const h = this.h;
         const r = this.particleRadius;
 
         const minX = h + r;
@@ -246,32 +279,59 @@ export class FlipFluid {
         const minY = h + r;
         const maxY = (this.fNumY - 1) * h - r;
 
-        for (let i = this.numParticles - 1; i >= 0; i--) {
+        for (let i = 0; i < this.numParticles; i++) {
             let x = this.particlePos[2 * i];
             let y = this.particlePos[2 * i + 1];
+            let vx = this.particleVel[2 * i];
+            let vy = this.particleVel[2 * i + 1];
 
-            // Delete particles that leave through the top
-            if (y > maxY) {
-                this.removeParticle(i);
-                continue;
-            }
-
-            // Wall collisions
             if (x < minX) {
                 x = minX;
-                this.particleVel[2 * i] = 0.0;
-            }
-            if (x > maxX) {
+                vx = 0.0;
+            } else if (x > maxX) {
                 x = maxX;
-                this.particleVel[2 * i] = 0.0;
+                vx = 0.0;
             }
+
             if (y < minY) {
                 y = minY;
-                this.particleVel[2 * i + 1] = 0.0;
+                vy = 0.0;
+            } else if (y > maxY) {
+                y = maxY;
+                vy = 0.0;
+            }
+
+            for (const rock of this.solidCircles) {
+                const dx = x - rock.x;
+                const dy = y - rock.y;
+                const minDist = rock.radius + r;
+                const d2 = dx * dx + dy * dy;
+
+                if (d2 < minDist * minDist) {
+                    const d = Math.sqrt(d2);
+
+                    let nx = 1.0;
+                    let ny = 0.0;
+                    if (d > 1e-8) {
+                        nx = dx / d;
+                        ny = dy / d;
+                    }
+
+                    x = rock.x + nx * minDist;
+                    y = rock.y + ny * minDist;
+
+                    const vn = vx * nx + vy * ny;
+                    if (vn < 0.0) {
+                        vx -= vn * nx;
+                        vy -= vn * ny;
+                    }
+                }
             }
 
             this.particlePos[2 * i] = x;
             this.particlePos[2 * i + 1] = y;
+            this.particleVel[2 * i] = vx;
+            this.particleVel[2 * i + 1] = vy;
         }
     }
 
@@ -305,16 +365,22 @@ export class FlipFluid {
             if (x0 < this.fNumX && y1 < this.fNumY) d[x0 * n + y1] += sx * ty;
         }
 
-        // Calculate rest density
+        const cellArea = h * h;
+        for (let i = 0; i < d.length; i++) {
+            d[i] *= this.density / cellArea;
+        }
+
         if (this.particleRestDensity === 0.0) {
             let sum = 0.0;
             let numFluidCells = 0;
+
             for (let i = 0; i < this.fNumCells; i++) {
                 if (this.cellType[i] === FLUID_CELL) {
                     sum += d[i];
                     numFluidCells++;
                 }
             }
+
             if (numFluidCells > 0) {
                 this.particleRestDensity = sum / numFluidCells;
             }
@@ -326,6 +392,7 @@ export class FlipFluid {
         const h = this.h;
         const h1 = this.fInvSpacing;
         const h2 = 0.5 * h;
+        const safeFlipRatio = clamp01(flipRatio);
 
         if (toGrid) {
             this.prevU.set(this.u);
@@ -335,7 +402,6 @@ export class FlipFluid {
             this.u.fill(0.0);
             this.v.fill(0.0);
 
-            // Mark cells
             for (let i = 0; i < this.fNumCells; i++) {
                 this.cellType[i] = this.s[i] === 0.0 ? SOLID_CELL : AIR_CELL;
             }
@@ -357,7 +423,7 @@ export class FlipFluid {
             const dy = component === 0 ? h2 : 0.0;
             const f = component === 0 ? this.u : this.v;
             const prevF = component === 0 ? this.prevU : this.prevV;
-            const d = component === 0 ? this.du : this.dv;
+            const weights = component === 0 ? this.du : this.dv;
 
             for (let i = 0; i < this.numParticles; i++) {
                 const x = clamp(this.particlePos[2 * i], h, (this.fNumX - 1) * h);
@@ -386,12 +452,13 @@ export class FlipFluid {
 
                 if (toGrid) {
                     const pv = this.particleVel[2 * i + component];
-                    f[nr0] += pv * d0; d[nr0] += d0;
-                    f[nr1] += pv * d1; d[nr1] += d1;
-                    f[nr2] += pv * d2; d[nr2] += d2;
-                    f[nr3] += pv * d3; d[nr3] += d3;
+                    f[nr0] += pv * d0; weights[nr0] += d0;
+                    f[nr1] += pv * d1; weights[nr1] += d1;
+                    f[nr2] += pv * d2; weights[nr2] += d2;
+                    f[nr3] += pv * d3; weights[nr3] += d3;
                 } else {
                     const offset = component === 0 ? n : 1;
+
                     const valid0 = this.cellType[nr0] !== AIR_CELL || this.cellType[nr0 - offset] !== AIR_CELL ? 1.0 : 0.0;
                     const valid1 = this.cellType[nr1] !== AIR_CELL || this.cellType[nr1 - offset] !== AIR_CELL ? 1.0 : 0.0;
                     const valid2 = this.cellType[nr2] !== AIR_CELL || this.cellType[nr2 - offset] !== AIR_CELL ? 1.0 : 0.0;
@@ -401,27 +468,44 @@ export class FlipFluid {
                     const totalValid = valid0 * d0 + valid1 * d1 + valid2 * d2 + valid3 * d3;
 
                     if (totalValid > 0.0) {
-                        const picV = (valid0 * d0 * f[nr0] + valid1 * d1 * f[nr1] + valid2 * d2 * f[nr2] + valid3 * d3 * f[nr3]) / totalValid;
-                        const corr = (valid0 * d0 * (f[nr0] - prevF[nr0]) + valid1 * d1 * (f[nr1] - prevF[nr1]) + valid2 * d2 * (f[nr2] - prevF[nr2]) + valid3 * d3 * (f[nr3] - prevF[nr3])) / totalValid;
+                        const picV = (
+                            valid0 * d0 * f[nr0] +
+                            valid1 * d1 * f[nr1] +
+                            valid2 * d2 * f[nr2] +
+                            valid3 * d3 * f[nr3]
+                        ) / totalValid;
+
+                        const corr = (
+                            valid0 * d0 * (f[nr0] - prevF[nr0]) +
+                            valid1 * d1 * (f[nr1] - prevF[nr1]) +
+                            valid2 * d2 * (f[nr2] - prevF[nr2]) +
+                            valid3 * d3 * (f[nr3] - prevF[nr3])
+                        ) / totalValid;
+
                         const flipV = v + corr;
-                        this.particleVel[2 * i + component] = (1.0 - flipRatio) * picV + flipRatio * flipV;
+                        this.particleVel[2 * i + component] = (1.0 - safeFlipRatio) * picV + safeFlipRatio * flipV;
                     }
                 }
             }
 
             if (toGrid) {
                 for (let i = 0; i < f.length; i++) {
-                    if (d[i] > 0.0) f[i] /= d[i];
+                    if (weights[i] > 0.0) {
+                        f[i] /= weights[i];
+                    }
                 }
 
                 for (let i = 0; i < this.fNumX; i++) {
                     for (let j = 0; j < this.fNumY; j++) {
-                        const solid = this.cellType[i * n + j] === SOLID_CELL;
+                        const cell = i * n + j;
+                        const solid = this.cellType[cell] === SOLID_CELL;
+
                         if (solid || (i > 0 && this.cellType[(i - 1) * n + j] === SOLID_CELL)) {
-                            this.u[i * n + j] = this.prevU[i * n + j];
+                            this.u[cell] = 0.0;
                         }
+
                         if (solid || (j > 0 && this.cellType[i * n + j - 1] === SOLID_CELL)) {
-                            this.v[i * n + j] = this.prevV[i * n + j];
+                            this.v[cell] = 0.0;
                         }
                     }
                 }
@@ -440,9 +524,9 @@ export class FlipFluid {
         for (let iter = 0; iter < numIters; iter++) {
             for (let i = 1; i < this.fNumX - 1; i++) {
                 for (let j = 1; j < this.fNumY - 1; j++) {
-                    if (this.cellType[i * n + j] !== FLUID_CELL) continue;
-
                     const center = i * n + j;
+                    if (this.cellType[center] !== FLUID_CELL) continue;
+
                     const left = (i - 1) * n + j;
                     const right = (i + 1) * n + j;
                     const bottom = i * n + j - 1;
@@ -459,40 +543,91 @@ export class FlipFluid {
                     let div = this.u[right] - this.u[center] + this.v[top] - this.v[center];
 
                     if (this.particleRestDensity > 0.0 && compensateDrift) {
-                        const k = 1.0;
-                        const compression = this.particleDensity[i * n + j] - this.particleRestDensity;
-                        if (compression > 0.0) div = div - k * compression;
+                        const driftStrength = 1.0;
+                        const compression = this.particleDensity[center] - this.particleRestDensity;
+
+                        if (compression > 0.0) {
+                            div -= driftStrength * compression;
+                        }
                     }
 
-                    let p = -div / s;
-                    p *= overRelaxation;
-                    this.p[center] += cp * p;
+                    let pressureCorrection = -div / s;
+                    pressureCorrection *= overRelaxation;
+                    this.p[center] += cp * pressureCorrection;
 
-                    this.u[center] -= sx0 * p;
-                    this.u[right] += sx1 * p;
-                    this.v[center] -= sy0 * p;
-                    this.v[top] += sy1 * p;
+                    this.u[center] -= sx0 * pressureCorrection;
+                    this.u[right] += sx1 * pressureCorrection;
+                    this.v[center] -= sy0 * pressureCorrection;
+                    this.v[top] += sy1 * pressureCorrection;
                 }
             }
         }
     }
 
+    updateParticleColors(dt: number): void {
+        const h1 = this.fInvSpacing;
+        const t = clamp01(this.foamReturnRate * dt);
+
+        for (let i = 0; i < this.numParticles; i++) {
+            const x = this.particlePos[2 * i];
+            const y = this.particlePos[2 * i + 1];
+            const xi = clamp(Math.floor(x * h1), 1, this.fNumX - 1);
+            const yi = clamp(Math.floor(y * h1), 1, this.fNumY - 1);
+            const cellNr = xi * this.fNumY + yi;
+
+            let applyFoam = false;
+            const restDensity = this.particleRestDensity;
+
+            if (restDensity > 0.0) {
+                const relDensity = this.particleDensity[cellNr] / restDensity;
+                applyFoam = relDensity < 0.7;
+            }
+
+            if (applyFoam) {
+                this.particleColor[3 * i] = this.foamColor.r;
+                this.particleColor[3 * i + 1] = this.foamColor.g;
+                this.particleColor[3 * i + 2] = this.foamColor.b;
+            } else {
+                const cr = this.particleColor[3 * i];
+                const cg = this.particleColor[3 * i + 1];
+                const cb = this.particleColor[3 * i + 2];
+
+                this.particleColor[3 * i] = cr + (this.baseColor.r - cr) * t;
+                this.particleColor[3 * i + 1] = cg + (this.baseColor.g - cg) * t;
+                this.particleColor[3 * i + 2] = cb + (this.baseColor.b - cb) * t;
+            }
+        }
+    }
 
     setSciColor(cellNr: number, val: number, minVal: number, maxVal: number): void {
         val = Math.min(Math.max(val, minVal), maxVal - 0.0001);
         const d = maxVal - minVal;
         val = d === 0.0 ? 0.5 : (val - minVal) / d;
+
         const m = 0.25;
         const num = Math.floor(val / m);
         const s = (val - num * m) / m;
-        let r: number, g: number, b: number;
+
+        let r: number;
+        let g: number;
+        let b: number;
 
         switch (num) {
-            case 0: r = 0.0; g = s; b = 1.0; break;
-            case 1: r = 0.0; g = 1.0; b = 1.0 - s; break;
-            case 2: r = s; g = 1.0; b = 0.0; break;
-            case 3: r = 1.0; g = 1.0 - s; b = 0.0; break;
-            default: r = 1.0; g = 0.0; b = 0.0; break;
+            case 0:
+                r = 0.0; g = s; b = 1.0;
+                break;
+            case 1:
+                r = 0.0; g = 1.0; b = 1.0 - s;
+                break;
+            case 2:
+                r = s; g = 1.0; b = 0.0;
+                break;
+            case 3:
+                r = 1.0; g = 1.0 - s; b = 0.0;
+                break;
+            default:
+                r = 1.0; g = 0.0; b = 0.0;
+                break;
         }
 
         this.cellColor[3 * cellNr] = r;
@@ -510,7 +645,11 @@ export class FlipFluid {
                 this.cellColor[3 * i + 2] = 0.5;
             } else if (this.cellType[i] === FLUID_CELL) {
                 let d = this.particleDensity[i];
-                if (this.particleRestDensity > 0.0) d /= this.particleRestDensity;
+
+                if (this.particleRestDensity > 0.0) {
+                    d /= this.particleRestDensity;
+                }
+
                 this.setSciColor(i, d, 0.0, 2.0);
             }
         }
@@ -526,95 +665,79 @@ export class FlipFluid {
         overRelaxation: number,
         compensateDrift: boolean,
         separateParticles: boolean,
-        damping: number = 1.00
+        damping = 1.0
     ): void {
-        const numSubSteps = 1;
+        const numSubSteps = Math.max(1, Math.ceil(dt / (1.0 / 120.0)));
         const sdt = dt / numSubSteps;
 
         for (let step = 0; step < numSubSteps; step++) {
             this.integrateParticles(sdt, gravityX, gravityY, damping);
-            if (separateParticles) this.pushParticlesApart(numParticleIters);
+
+            if (separateParticles) {
+                this.pushParticlesApart(numParticleIters);
+            }
+
             this.handleParticleCollisions();
             this.transferVelocities(true, flipRatio);
             this.updateParticleDensity();
             this.solveIncompressibility(numPressureIters, sdt, overRelaxation, compensateDrift);
             this.transferVelocities(false, flipRatio);
         }
+
+        this.updateParticleColors(dt);
         this.updateCellColors();
     }
 
-    setFluidColor(baseColor: { r: number; g: number; b: number }): void {
-        this.baseColor = { ...baseColor };
+    setFluidColor(baseColor: RGBColor): void {
+        this.baseColor = sanitizeColor(baseColor);
+        this.initializeParticleColors(this.baseColor);
     }
 
-    spawnParticle(x: number, y: number, vx = 0.0, vy = 0.0): boolean {
-        if (this.numParticles >= this.maxParticles) return false;
-
-        const i = this.numParticles;
-        this.particlePos[2 * i] = x;
-        this.particlePos[2 * i + 1] = y;
-        this.particleVel[2 * i] = vx;
-        this.particleVel[2 * i + 1] = vy;
-        this.particleColor[3 * i] = this.baseColor.r;
-        this.particleColor[3 * i + 1] = this.baseColor.g;
-        this.particleColor[3 * i + 2] = this.baseColor.b;
-        this.numParticles++;
-
-        return true;
+    setFoamColor(foamColor: RGBColor): void {
+        this.foamColor = sanitizeColor(foamColor);
     }
 
-    spawnParticlesInRectangle(
-    cx: number,
-    cy: number,
-    radius: number,
-    count: number,
-    speed = 0.0
-    ): number {
-        const r = Math.max(radius, this.particleRadius);
-    
-        // Same spacing pattern as setupFluidScene
-        const dx = 2.0 * this.particleRadius;
-        const dy = Math.sqrt(3.0) / 2.0 * dx;
-    
-        const h = this.h;
-        const minX = h + this.particleRadius;
-        const maxX = (this.fNumX - 1) * h - this.particleRadius;
-        const minY = h + this.particleRadius;
-        const maxY = (this.fNumY - 1) * h - this.particleRadius;
-    
-        // Row/column extents covering the disk
-        const maxRows = Math.ceil(r / dy);
-        const maxCols = Math.ceil(r / dx) + 1;
-    
-        let spawned = 0;
-    
-        for (let row = -maxRows; row <= maxRows && spawned < count; row++) {
-            const y = cy + row * dy;
-    
-            for (let col = -maxCols; col <= maxCols && spawned < count; col++) {
-                const x = cx + col * dx + (row % 2 === 0 ? 0.0 : this.particleRadius);
-    
-                const ddx = x - cx;
-                const ddy = y - cy;
-                if (ddx * ddx + ddy * ddy > r * r) continue;
-    
-                const px = clamp(x, minX, maxX);
-                const py = clamp(y, minY, maxY);
-    
-                // Keep your speed behavior (outward from center)
-                const len = Math.sqrt(ddx * ddx + ddy * ddy);
-                const vx = len > 1e-6 ? (ddx / len) * speed : 0.0;
-                const vy = len > 1e-6 ? (ddy / len) * speed : 0.0;
-    
-                if (!this.spawnParticle(px, py, vx, vy)) return spawned;
-                spawned++;
+    setColorDiffusionCoeff(coeff: number): void {
+        this.colorDiffusionCoeff = clamp01(coeff);
+    }
+
+    setFoamReturnRate(rate: number): void {
+        this.foamReturnRate = Math.max(0, rate);
+    }
+
+    getStats(): FluidStats {
+        let fluidCells = 0;
+        let solidCells = 0;
+        let airCells = 0;
+        let totalSpeed = 0;
+        let maxParticleSpeed = 0;
+
+        for (let i = 0; i < this.fNumCells; i++) {
+            if (this.cellType[i] === FLUID_CELL) {
+                fluidCells++;
+            } else if (this.cellType[i] === SOLID_CELL) {
+                solidCells++;
+            } else {
+                airCells++;
             }
         }
-    
-        return spawned;
-    }
 
-    isFluidCellAt(x: number, y: number) {
-        return this.cellType[x * this.fNumY + y] === FLUID_CELL;
+        for (let i = 0; i < this.numParticles; i++) {
+            const vx = this.particleVel[2 * i];
+            const vy = this.particleVel[2 * i + 1];
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            totalSpeed += speed;
+            maxParticleSpeed = Math.max(maxParticleSpeed, speed);
+        }
+
+        return {
+            particleCount: this.numParticles,
+            fluidCells,
+            solidCells,
+            airCells,
+            averageParticleSpeed: this.numParticles > 0 ? totalSpeed / this.numParticles : 0,
+            maxParticleSpeed,
+            restDensity: this.particleRestDensity
+        };
     }
 }

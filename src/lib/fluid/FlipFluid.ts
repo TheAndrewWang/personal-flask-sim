@@ -482,7 +482,7 @@ export class FlipFluid {
             const d0 = this.particleRestDensity;
             if (d0 > 0.0) {
                 const relDensity = this.particleDensity[cellNr] / d0;
-                if (relDensity < 0.7) applyFoam = true;
+                if (relDensity < 0.4) applyFoam = true;
             }
 
             if (applyFoam) {
@@ -606,33 +606,54 @@ export class FlipFluid {
         return true;
     }
 
-    spawnParticlesInDisk(
-        cx: number,
-        cy: number,
-        radius: number,
-        count: number,
-        speed = 0.0
+    spawnParticlesInRectangle(
+    cx: number,
+    cy: number,
+    radius: number,
+    count: number,
+    speed = 0.0
     ): number {
         const r = Math.max(radius, this.particleRadius);
+    
+        // Same spacing pattern as setupFluidScene
+        const dx = 2.0 * this.particleRadius;
+        const dy = Math.sqrt(3.0) / 2.0 * dx;
+    
         const h = this.h;
         const minX = h + this.particleRadius;
         const maxX = (this.fNumX - 1) * h - this.particleRadius;
         const minY = h + this.particleRadius;
         const maxY = (this.fNumY - 1) * h - this.particleRadius;
-
+    
+        // Row/column extents covering the disk
+        const maxRows = Math.ceil(r / dy);
+        const maxCols = Math.ceil(r / dx) + 1;
+    
         let spawned = 0;
-        for (let i = 0; i < count; i++) {
-            const a = Math.random() * Math.PI * 2.0;
-            const rr = Math.sqrt(Math.random()) * r;
-
-            const x = clamp(cx + Math.cos(a) * rr, minX, maxX);
-            const y = clamp(cy + Math.sin(a) * rr, minY, maxY);
-            const vx = Math.cos(a) * speed;
-            const vy = Math.sin(a) * speed;
-
-            if (!this.spawnParticle(x, y, vx, vy)) break;
-            spawned++;
+    
+        for (let row = -maxRows; row <= maxRows && spawned < count; row++) {
+            const y = cy + row * dy;
+    
+            for (let col = -maxCols; col <= maxCols && spawned < count; col++) {
+                const x = cx + col * dx + (row % 2 === 0 ? 0.0 : this.particleRadius);
+    
+                const ddx = x - cx;
+                const ddy = y - cy;
+                if (ddx * ddx + ddy * ddy > r * r) continue;
+    
+                const px = clamp(x, minX, maxX);
+                const py = clamp(y, minY, maxY);
+    
+                // Keep your speed behavior (outward from center)
+                const len = Math.sqrt(ddx * ddx + ddy * ddy);
+                const vx = len > 1e-6 ? (ddx / len) * speed : 0.0;
+                const vy = len > 1e-6 ? (ddy / len) * speed : 0.0;
+    
+                if (!this.spawnParticle(px, py, vx, vy)) return spawned;
+                spawned++;
+            }
         }
+    
         return spawned;
     }
 }

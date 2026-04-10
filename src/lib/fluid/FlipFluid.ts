@@ -40,9 +40,6 @@ export class FlipFluid {
 
     // Colors
     baseColor: { r: number; g: number; b: number };
-    foamColor: { r: number; g: number; b: number };
-    colorDiffusionCoeff: number;
-    foamReturnRate: number; // per-second rate towards base color
 
     // Particle grid
     particleRadius: number;
@@ -62,9 +59,6 @@ export class FlipFluid {
         particleRadius: number,
         maxParticles: number,
         baseColor?: { r: number; g: number; b: number },
-        foamColor?: { r: number; g: number; b: number },
-        colorDiffusionCoeff: number = 0.01,
-        foamReturnRate: number = 1.0
     ) {
         this.density = density;
         this.fNumX = Math.floor(width / spacing) + 1;
@@ -94,9 +88,6 @@ export class FlipFluid {
         const defaultColor = { r: 0.06, g: 0.45, b: 0.9 };
         const color = baseColor || defaultColor;
         this.baseColor = { ...color };
-        this.foamColor = foamColor || { r: 0.7, g: 0.9, b: 1.0 };
-        this.colorDiffusionCoeff = colorDiffusionCoeff;
-        this.foamReturnRate = foamReturnRate;
 
         for (let i = 0; i < this.maxParticles; i++) {
             // Single base color for all particles
@@ -140,7 +131,6 @@ export class FlipFluid {
     }
 
     pushParticlesApart(numIters: number): void {
-        const colorDiffusionCoeff = this.colorDiffusionCoeff;
 
         // Build spatial hash
         this.numCellParticles.fill(0);
@@ -218,8 +208,6 @@ export class FlipFluid {
                                 const color0 = this.particleColor[3 * i + k];
                                 const color1 = this.particleColor[3 * id + k];
                                 const color = (color0 + color1) * 0.5;
-                                this.particleColor[3 * i + k] = color0 + (color - color0) * colorDiffusionCoeff;
-                                this.particleColor[3 * id + k] = color1 + (color - color1) * colorDiffusionCoeff;
                             }
                         }
                     }
@@ -466,41 +454,6 @@ export class FlipFluid {
         }
     }
 
-    updateParticleColors(dt: number): void {
-        // Apply foam when in low-density regions; otherwise decay color back to base using time-based rate
-        const h1 = this.fInvSpacing;
-        const t = Math.max(0, Math.min(1, this.foamReturnRate * dt));
-
-        for (let i = 0; i < this.numParticles; i++) {
-            const x = this.particlePos[2 * i];
-            const y = this.particlePos[2 * i + 1];
-            const xi = clamp(Math.floor(x * h1), 1, this.fNumX - 1);
-            const yi = clamp(Math.floor(y * h1), 1, this.fNumY - 1);
-            const cellNr = xi * this.fNumY + yi;
-
-            let applyFoam = false;
-            const d0 = this.particleRestDensity;
-            if (d0 > 0.0) {
-                const relDensity = this.particleDensity[cellNr] / d0;
-                if (relDensity < 0.4) applyFoam = true;
-            }
-
-            if (applyFoam) {
-                // Set to foam color immediately while in foam region
-                this.particleColor[3 * i] = this.foamColor.r;
-                this.particleColor[3 * i + 1] = this.foamColor.g;
-                this.particleColor[3 * i + 2] = this.foamColor.b;
-            } else {
-                // Lerp back to base color at a controllable rate
-                const cr = this.particleColor[3 * i];
-                const cg = this.particleColor[3 * i + 1];
-                const cb = this.particleColor[3 * i + 2];
-                this.particleColor[3 * i] = cr + (this.baseColor.r - cr) * t;
-                this.particleColor[3 * i + 1] = cg + (this.baseColor.g - cg) * t;
-                this.particleColor[3 * i + 2] = cb + (this.baseColor.b - cb) * t;
-            }
-        }
-    }
 
     setSciColor(cellNr: number, val: number, minVal: number, maxVal: number): void {
         val = Math.min(Math.max(val, minVal), maxVal - 0.0001);
@@ -564,8 +517,6 @@ export class FlipFluid {
             this.solveIncompressibility(numPressureIters, sdt, overRelaxation, compensateDrift);
             this.transferVelocities(false, flipRatio);
         }
-
-        this.updateParticleColors(sdt);
         this.updateCellColors();
     }
 
@@ -576,18 +527,6 @@ export class FlipFluid {
             this.particleColor[3 * i + 1] = baseColor.g;
             this.particleColor[3 * i + 2] = baseColor.b;
         }
-    }
-
-    setFoamColor(foamColor: { r: number; g: number; b: number }): void {
-        this.foamColor = { ...foamColor };
-    }
-
-    setColorDiffusionCoeff(coeff: number): void {
-        this.colorDiffusionCoeff = Math.max(0, Math.min(1, coeff));
-    }
-
-    setFoamReturnRate(rate: number): void {
-        this.foamReturnRate = Math.max(0, rate);
     }
 
     spawnParticle(x: number, y: number, vx = 0.0, vy = 0.0): boolean {

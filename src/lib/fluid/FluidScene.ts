@@ -62,9 +62,6 @@ export function setupFluidScene(
         r,
         maxParticles,
         baseColor,
-        foamColor,
-        colorDiffusionCoeff,
-        foamReturnRate
     );
 
     // Create particles centered on the screen

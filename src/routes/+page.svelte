@@ -6,6 +6,9 @@
 	import { Tween } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';
 
+	import Palette from '@lucide/svelte/icons/palette';
+	import X from '@lucide/svelte/icons/x';
+
 	import { browser } from '$app/environment';
 	import FluidSimulation from '$lib/FluidSimulation.svelte';
 
@@ -41,6 +44,16 @@
 	];
 
 	let currentFluidIndex = $state(0);
+	let colorPanelOpen = $state(false);
+
+	function toCSS(c: { r: number; g: number; b: number }) {
+		return `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`;
+	}
+
+	function selectColor(index: number) {
+		if (index === currentFluidIndex) return;
+		currentFluidIndex = index;
+	}
 
 	let angle: number | undefined = $state(0);
 	let gravity: { x: number; y: number } = $state({ x: 0, y: -MAX_GRAVITY });
@@ -217,6 +230,37 @@
 	{:else}
 		<FluidSimulation
 			{gravity}
+			fluidColor={fluidTypes[currentFluidIndex].fluidColor}
 		/>
+
+		<!-- Color picker panel -->
+		<div class="absolute top-5 right-5 z-20 flex flex-col items-center gap-2">
+			<button
+				onclick={() => (colorPanelOpen = !colorPanelOpen)}
+				class="flex h-10 w-10 items-center justify-center rounded-full shadow-lg backdrop-blur-sm transition-colors"
+				style:background-color={colorPanelOpen ? 'rgba(255,255,255,0.2)' : toCSS(fluidTypes[currentFluidIndex].fluidColor)}
+			>
+				{#if colorPanelOpen}
+					<X class="h-5 w-5 text-white" />
+				{:else}
+					<Palette class="h-5 w-5 text-white drop-shadow" />
+				{/if}
+			</button>
+
+			{#if colorPanelOpen}
+				<div class="flex flex-col gap-2 rounded-xl bg-black/40 p-2 backdrop-blur-md">
+					{#each fluidTypes as fluid, i}
+						<button
+							onclick={() => selectColor(i)}
+							aria-label="Select color {i + 1}"
+							class="h-8 w-8 rounded-full border-2 transition-transform hover:scale-110"
+							class:border-white={i === currentFluidIndex}
+							class:border-transparent={i !== currentFluidIndex}
+							style:background-color={toCSS(fluid.fluidColor)}
+						></button>
+					{/each}
+				</div>
+			{/if}
+		</div>
 	{/if}
 </div>

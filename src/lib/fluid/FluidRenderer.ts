@@ -1,4 +1,5 @@
 import type { FlipFluid } from './FlipFluid';
+import { ElementRenderer, type ElementRenderData } from '../elements/ElementRenderer';
 
 const pointVertexShader = `
 	attribute vec2 attrPosition;
@@ -34,40 +35,18 @@ const pointFragmentShader = `
 	}
 `;
 
-const meshVertexShader = `
-	attribute vec2 attrPosition;
-	uniform vec2 domainSize;
-	uniform vec3 color;
-	uniform vec2 translation;
-	uniform float scale;
-	varying vec3 fragColor;
-	void main() {
-		vec2 v = translation + attrPosition * scale;
-		vec4 screenTransform = vec4(2.0 / domainSize.x, 2.0 / domainSize.y, -1.0, -1.0);
-		gl_Position = vec4(v * screenTransform.xy + screenTransform.zw, 0.0, 1.0);
-		fragColor = color;
-	}
-`;
-
-const meshFragmentShader = `
-	precision mediump float;
-	varying vec3 fragColor;
-	void main() {
-		gl_FragColor = vec4(fragColor, 1.0);
-	}
-`;
-
 export interface RenderConfig {
     showParticles: boolean;
     showGrid: boolean;
     simWidth: number;
     simHeight: number;
+    element?: ElementRenderData;
 }
 
 export class FluidRenderer {
     private gl: WebGLRenderingContext;
     private pointShader: WebGLProgram;
-    private meshShader: WebGLProgram;
+    private elementRenderer: ElementRenderer;
     private pointVertexBuffer: WebGLBuffer;
     private pointColorBuffer: WebGLBuffer;
     private gridVertBuffer: WebGLBuffer;
@@ -86,7 +65,7 @@ export class FluidRenderer {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         this.pointShader = this.createShader(pointVertexShader, pointFragmentShader);
-        this.meshShader = this.createShader(meshVertexShader, meshFragmentShader);
+        this.elementRenderer = new ElementRenderer(gl);
 
         this.pointVertexBuffer = this.createBuffer();
         this.pointColorBuffer = this.createBuffer();
@@ -136,15 +115,23 @@ export class FluidRenderer {
     }
 
     render(fluid: FlipFluid, config: RenderConfig): void {
-        // const gl = this.gl;
+        const gl = this.gl;
 
-        // Water-like background - deep ocean blue
-        // gl.clearColor(0.02, 0.1, 0.2, 1.0);
-        // gl.clear(gl.COLOR_BUFFER_BIT);
-        // gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        //Water-like background - deep ocean blue
+        gl.clearColor(0.02, 0.1, 0.2, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
         // Render particles and grid
         this.renderPoints(fluid, config);
+
+        if (config.element) {
+            this.elementRenderer.render({
+                simWidth: config.simWidth,
+                simHeight: config.simHeight,
+                element: config.element,
+            });
+        }
     }
 
     private renderPoints(fluid: FlipFluid, config: RenderConfig): void {

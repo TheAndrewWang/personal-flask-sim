@@ -595,4 +595,8 @@ export class FlipFluid {
     
         return spawned;
     }
+
+    isFluidCellAt(x: number, y: number) {
+        return this.cellType[x * this.fNumY + y] === FLUID_CELL;
+    }
 }

@@ -216,6 +216,20 @@ export class FlipFluid {
         }
     }
 
+    removeParticle(index: number): void {
+        if (index < 0 || index >= this.numParticles) return;
+        const last = this.numParticles - 1;
+        if (index !== last) {
+            // Swap position
+            this.particlePos[2 * index] = this.particlePos[2 * last];
+            this.particlePos[2 * index + 1] = this.particlePos[2 * last + 1];
+            // Swap velocity
+            this.particleVel[2 * index] = this.particleVel[2 * last];
+            this.particleVel[2 * index + 1] = this.particleVel[2 * last + 1];
+        }
+        this.numParticles--;
+    }
+
     handleParticleCollisions(): void {
         const h = 1.0 / this.fInvSpacing;
         const r = this.particleRadius;
@@ -225,9 +239,15 @@ export class FlipFluid {
         const minY = h + r;
         const maxY = (this.fNumY - 1) * h - r;
 
-        for (let i = 0; i < this.numParticles; i++) {
+        for (let i = this.numParticles - 1; i >= 0; i--) {
             let x = this.particlePos[2 * i];
             let y = this.particlePos[2 * i + 1];
+
+            // Delete particles that leave through the top
+            if (y > maxY) {
+                this.removeParticle(i);
+                continue;
+            }
 
             // Wall collisions
             if (x < minX) {
@@ -240,10 +260,6 @@ export class FlipFluid {
             }
             if (y < minY) {
                 y = minY;
-                this.particleVel[2 * i + 1] = 0.0;
-            }
-            if (y > maxY) {
-                y = maxY;
                 this.particleVel[2 * i + 1] = 0.0;
             }
 
@@ -522,11 +538,6 @@ export class FlipFluid {
 
     setFluidColor(baseColor: { r: number; g: number; b: number }): void {
         this.baseColor = { ...baseColor };
-        for (let i = 0; i < this.maxParticles; i++) {
-            this.particleColor[3 * i] = baseColor.r;
-            this.particleColor[3 * i + 1] = baseColor.g;
-            this.particleColor[3 * i + 2] = baseColor.b;
-        }
     }
 
     spawnParticle(x: number, y: number, vx = 0.0, vy = 0.0): boolean {

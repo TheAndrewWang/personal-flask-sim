@@ -183,7 +183,6 @@
 
 	const onShake = () => {
 		currentFluidIndex = (currentFluidIndex + 1) % fluidTypes.length;
-		const newFluid = fluidTypes[currentFluidIndex];
 	};
 </script>
 

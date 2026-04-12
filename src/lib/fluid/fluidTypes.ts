@@ -4,6 +4,11 @@ export type RGBColor = {
     b: number;
 };
 
+export type Vec2 = {
+    x: number;
+    y: number;
+};
+
 export type SolidCircle = {
     x: number;
     y: number;
@@ -29,6 +34,39 @@ export function clamp01(x: number): number {
 
 export function lerp(a: number, b: number, t: number): number {
     return a + (b - a) * clamp01(t);
+}
+
+export function inverseLerp(a: number, b: number, value: number): number {
+    if (a === b) return 0;
+    return clamp01((value - a) / (b - a));
+}
+
+export function remap(value: number, inMin: number, inMax: number, outMin: number, outMax: number): number {
+    return lerp(outMin, outMax, inverseLerp(inMin, inMax, value));
+}
+
+export function distanceSquared(a: Vec2, b: Vec2): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+
+    return dx * dx + dy * dy;
+}
+
+export function distance(a: Vec2, b: Vec2): number {
+    return Math.sqrt(distanceSquared(a, b));
+}
+
+export function normalizeVec2(v: Vec2): Vec2 {
+    const len = Math.sqrt(v.x * v.x + v.y * v.y);
+
+    if (len <= 1e-8) {
+        return { x: 0, y: 0 };
+    }
+
+    return {
+        x: v.x / len,
+        y: v.y / len
+    };
 }
 
 export function sanitizeColor(color: RGBColor): RGBColor {
@@ -90,6 +128,39 @@ export function validateBounds(bounds: Bounds2D, name = 'bounds'): void {
     }
 }
 
+export function getBoundsWidth(bounds: Bounds2D): number {
+    return bounds.maxX - bounds.minX;
+}
+
+export function getBoundsHeight(bounds: Bounds2D): number {
+    return bounds.maxY - bounds.minY;
+}
+
+export function getBoundsCenter(bounds: Bounds2D): Vec2 {
+    return {
+        x: (bounds.minX + bounds.maxX) * 0.5,
+        y: (bounds.minY + bounds.maxY) * 0.5
+    };
+}
+
+export function expandBounds(bounds: Bounds2D, amount: number): Bounds2D {
+    return {
+        minX: bounds.minX - amount,
+        maxX: bounds.maxX + amount,
+        minY: bounds.minY - amount,
+        maxY: bounds.maxY + amount
+    };
+}
+
+export function pointInsideBounds(point: Vec2, bounds: Bounds2D): boolean {
+    return (
+        point.x >= bounds.minX &&
+        point.x <= bounds.maxX &&
+        point.y >= bounds.minY &&
+        point.y <= bounds.maxY
+    );
+}
+
 export function circleIntersectsBounds(circle: SolidCircle, bounds: Bounds2D): boolean {
     const closestX = clamp(circle.x, bounds.minX, bounds.maxX);
     const closestY = clamp(circle.y, bounds.minY, bounds.maxY);
@@ -105,4 +176,20 @@ export function circleContainsPoint(circle: SolidCircle, x: number, y: number, p
     const radius = circle.radius + padding;
 
     return dx * dx + dy * dy <= radius * radius;
+}
+
+export function scaleCircle(circle: SolidCircle, scaleX: number, scaleY = scaleX): SolidCircle {
+    return {
+        x: circle.x * scaleX,
+        y: circle.y * scaleY,
+        radius: circle.radius * Math.min(scaleX, scaleY)
+    };
+}
+
+export function translateCircle(circle: SolidCircle, offset: Vec2): SolidCircle {
+    return {
+        x: circle.x + offset.x,
+        y: circle.y + offset.y,
+        radius: circle.radius
+    };
 }

@@ -187,7 +187,7 @@
 </script>
 
 <div
-	class="relative flex h-screen flex-col items-center justify-center bg-gradient-to-b from-gray-900 via-gray-800 to-gray-950"
+	class="relative flex h-dvh overflow-hidden flex-col items-center justify-center bg-gradient-to-b from-gray-900 via-gray-800 to-gray-950"
 >
 	{#if appState === 'loading'}
 		<div class="text-center">

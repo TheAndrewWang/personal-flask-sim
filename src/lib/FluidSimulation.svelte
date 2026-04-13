@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { Element } from '$lib/elements/Element';
+	import carbonImage from '$lib/assets/carbon.png';
 
-	import { setupFluidScene, FluidRenderer } from '$lib/fluid';
+	import { setupFluidScene, FluidRenderer, FLUID_CELL } from '$lib/fluid';
 	import type { FlipFluid } from '$lib/fluid';
 
 	let {
@@ -20,8 +22,10 @@
 	let canvas: HTMLCanvasElement;
 	let fluid: FlipFluid;
 	let renderer: FluidRenderer;
+	let solidElement: Element;
 	let animationId: number;
 	let isDragging = false;
+	let fluidTouchingElement = false;
 
 	let simHeight = 3.0;
 	let simWidth = 4.0;
@@ -43,6 +47,9 @@
 	// Particle count controls
 	const relWaterWidth = 0.6; // Water width as fraction of tank (0.1 to 1.0)
 	const relWaterHeight = 0.8; // Water height as fraction of tank (0.1 to 1.0)
+	const elementWidth = 0.3;
+	const elementHeight = 0.3;
+	const minIntersectingFluidCells = 2; // Set for sensitivity of fluid-solid collisions
 
 	function resizeCanvas() {
 		if (!canvas) return;
@@ -63,7 +70,7 @@
 	}
 
 	function simulate() {
-		if (!fluid) return;
+		if (!fluid || !solidElement) return;
 
 		fluid.simulate(
 			dt,
@@ -77,16 +84,61 @@
 			separateParticles,
 			damping
 		);
+
+		solidElement.step(dt, gravity.x, gravity.y, damping);
+
+		const halfW = solidElement.getWidth() * 0.5;
+		const halfH = solidElement.getHeight() * 0.5;
+		solidElement.confineToBounds(halfW, simWidth - halfW, halfH, simHeight - halfH);
+
+		fluidTouchingElement = isFluidTouchingElement();
+	}
+
+	function isFluidTouchingElement(): boolean {
+		if (!fluid || !solidElement) return false;
+
+		const requiredCells = Math.max(1, Math.floor(minIntersectingFluidCells));
+		const halfW = solidElement.getWidth() * 0.5;
+		const halfH = solidElement.getHeight() * 0.5;
+		const minX = Math.max(0.0, solidElement.getX() - halfW);
+		const maxX = Math.min(simWidth, solidElement.getX() + halfW);
+		const minY = Math.max(0.0, solidElement.getY() - halfH);
+		const maxY = Math.min(simHeight, solidElement.getY() + halfH);
+
+		const x0 = Math.max(0, Math.floor(minX * fluid.fInvSpacing));
+		const x1 = Math.min(fluid.fNumX - 1, Math.floor(maxX * fluid.fInvSpacing));
+		const y0 = Math.max(0, Math.floor(minY * fluid.fInvSpacing));
+		const y1 = Math.min(fluid.fNumY - 1, Math.floor(maxY * fluid.fInvSpacing));
+
+		let fluidCellCount = 0;
+		for (let xi = x0; xi <= x1; xi++) {
+			for (let yi = y0; yi <= y1; yi++) {
+				if (fluid.cellType[xi * fluid.fNumY + yi] === FLUID_CELL) {
+					fluidCellCount++;
+					if (fluidCellCount >= requiredCells) return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	function render() {
-		if (!fluid || !renderer) return;
+		if (!fluid || !renderer || !solidElement) return;
 
 		renderer.render(fluid, {
 			showParticles,
 			showGrid,
 			simWidth,
-			simHeight
+			simHeight,
+			element: {
+				x: solidElement.getX(),
+				y: solidElement.getY(),
+				width: solidElement.getWidth(),
+				height: solidElement.getHeight(),
+				imageSrc: solidElement.getImageSrc(),
+				isTouching: fluidTouchingElement
+			}
 		});
 	}
 
@@ -133,7 +185,7 @@
 			spawnAtPointer(event);
 			id = setInterval(() => {
 				spawnAtPointer(event);
-			}, 50);
+			}, 30);
 		}
 	    const handlePointerUp = (event: PointerEvent) => {
             isDragging = false;
@@ -176,6 +228,15 @@
 			fluidColor
 		);
 		renderer = new FluidRenderer(canvas);
+		solidElement = new Element(
+			'block',
+			1.0,
+			carbonImage,
+			elementWidth,
+			elementHeight,
+			simWidth * 0.5,
+			simHeight * 0.75
+		);
 
 		// Initial color is already set via constructor, keep setter for consistency
 		if (fluid) {

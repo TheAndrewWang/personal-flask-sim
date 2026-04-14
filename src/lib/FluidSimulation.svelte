@@ -5,23 +5,37 @@
 
 	import { setupFluidScene, FluidRenderer, FLUID_CELL } from '$lib/fluid';
 	import type { FlipFluid } from '$lib/fluid';
+	import { setupGasScene, GasRenderer } from '$lib/gas';
+	import type { FlipGas } from '$lib/gas';
 
 	let {
 		gravity = { x: 0, y: -9.81 },
+		gasGravity = { x: 0, y: 5 },
 		resolution = 70,
 		fluidColor = { r: 0.09, g: 0.4, b: 1.0 },
+		gasColor = { r: 0.09, g: 0.4, b: 1.0, a: 0.5 },
+		foamColor = { r: 0.75, g: 0.9, b: 1.0, a: 0.5 },
+		colorDiffusionCoeff = 0.0008,
+		foamReturnRate = 0.5,
 		onclick
 	}: {
 		gravity?: { x: number; y: number };
+		gasGravity?: { x: number; y: number };
 		resolution?: number;
 		angle?: number;
 		fluidColor?: { r: number; g: number; b: number };
+		gasColor?: { r: number; g: number; b: number; a: number };
+		foamColor?: { r: number; g: number; b: number; a: number };
+		colorDiffusionCoeff?: number;
+		foamReturnRate?: number;
 		onclick?: () => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
 	let fluid: FlipFluid;
+	let gas: FlipGas;
 	let renderer: FluidRenderer;
+	let gasRenderer: GasRenderer;
 	let solidElement: Element;
 	let animationId: number;
 	let isDragging = false;
@@ -39,10 +53,20 @@
 	const separateParticles = true;
 	const showParticles = true;
 	const showGrid = false;
+	const showFluid = true;      // metaball fluid surface
 	const damping = 0.99;
 	const clickSpawnCount = 40;
 	const clickSpawnRadius = 0.12;
 	const clickSpawnSpeed = 0.0;
+
+	//Gas spawning variables
+	let isHold = false; // Know if click is held
+	let currentTime;
+	let lastTime = 0;
+	let mouse = $state({ x: 0, y: 0 });
+	const yOffset = 0.25;
+	const numberOfParticles = 5;
+	const seperation = 10; // The range where particles can spawn around the mouse
 
 	// Particle count controls
 	const relWaterWidth = 0.6; // Water width as fraction of tank (0.1 to 1.0)
@@ -70,7 +94,7 @@
 	}
 
 	function simulate() {
-		if (!fluid || !solidElement) return;
+		if (!fluid || !solidElement || !gas) return;
 
 		fluid.simulate(
 			dt,
@@ -84,6 +108,19 @@
 			separateParticles,
 			damping
 		);
+
+		gas.simulate(
+			dt,
+			gasGravity.x,
+			gasGravity.y,
+			flipRatio,
+			numPressureIters,
+			numParticleIters,
+			overRelaxation,
+			compensateDrift,
+			separateParticles,
+			damping
+		)
 
 		solidElement.step(dt, gravity.x, gravity.y, damping);
 
@@ -124,7 +161,7 @@
 	}
 
 	function render() {
-		if (!fluid || !renderer || !solidElement) return;
+		if (!fluid || !renderer || !solidElement || !gas || !gasRenderer) return;
 
 		renderer.render(fluid, {
 			showParticles,
@@ -140,13 +177,38 @@
 				isTouching: fluidTouchingElement
 			}
 		});
+		gasRenderer.render(gas, {
+			showParticles,
+			showGrid,
+			showFluid,
+			simWidth,
+			simHeight
+		})
 	}
 
 	function update() {
 		simulate();
 		render();
+		currentTime = performance.now();
+		if (isHold && currentTime - lastTime > seperation) {
+			spawnGas();
+			lastTime = currentTime;
+		}
 		animationId = requestAnimationFrame(update);
 	}
+
+	const spawnGas = () => {
+		let x: number;
+		let y: number;
+		x = (mouse.x / window.innerWidth) * simWidth; //Transforms window position to simulation position
+		y = simHeight - ((mouse.y / window.innerHeight) * simHeight) + yOffset;
+		gas.addNewParticles(numberOfParticles, x, y);
+	};
+
+	function handleMousemove(event: any) {
+		mouse.x = event.clientX;
+		mouse.y = event.clientY;
+  	}
 
 	function spawnAtPointer(event: PointerEvent) {
         if (!fluid || !canvas) return;
@@ -238,6 +300,19 @@
 			simHeight * 0.75
 		);
 
+		gas = setupGasScene(
+			simWidth,
+			simHeight,
+			resolution,
+			relWaterWidth,
+			relWaterHeight,
+			gasColor,
+			foamColor,
+			colorDiffusionCoeff,
+			foamReturnRate
+		);
+		gasRenderer = new GasRenderer(canvas);
+
 		// Initial color is already set via constructor, keep setter for consistency
 		if (fluid) {
 			fluid.setFluidColor(fluidColor);
@@ -267,5 +342,14 @@
 		}
 	});
 </script>
+
+<svelte:window 
+  onpointerdown={() => isHold = true} 
+  onpointerup={() => isHold = false} 
+  onpointermove={handleMousemove}
+  on:touchstart={(e) => { e.preventDefault(); isHold = true; mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }}
+  on:touchend={() => isHold = false}
+  on:touchmove={(e) => { e.preventDefault(); mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }}
+/>
 
 <canvas bind:this={canvas} class="absolute inset-0 z-10 h-full w-full"></canvas>

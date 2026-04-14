@@ -13,6 +13,8 @@
 	import FluidSimulation from '$lib/FluidSimulation.svelte';
 
 	const MAX_GRAVITY = 9.81;
+	const MAX_GAS_GRAVITY = 5;
+
 
 	type AppState = 'loading' | 'needs-permission' | 'ready' | 'denied' | 'not-supported';
 
@@ -42,9 +44,70 @@
 			fluidColor: { r: 0.9, g: 0.7, b: 0.2 }
 		}
 	];
+	const gasTypes = [
+		{
+			gasColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 },
+			foamColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 },
+			colorDiffusionCoeff: 0.0008,
+			foamReturnRate: 0.5
+		},
+		{
+			gasColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.2 },
+			foamColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.2 },
+			colorDiffusionCoeff: 0.0012,
+			foamReturnRate: 0.6
+		},
+		{
+			gasColor: { r: 1.0, g: 0.4, b: 0.1, a: 0.2 },
+			foamColor: { r: 1.0, g: 0.4, b: 0.1, a: 0.2 },
+			colorDiffusionCoeff: 0.0004,
+			foamReturnRate: 0.3
+		},
+		{
+			gasColor: { r: 0.5, g: 0.2, b: 0.9, a: 0.2 },
+			foamColor: { r: 0.5, g: 0.2, b: 0.9, a: 0.2 },
+			colorDiffusionCoeff: 0.001,
+			foamReturnRate: 0.7
+		},
+		{
+			gasColor: { r: 0.1, g: 0.6, b: 0.4, a: 0.2 },
+			foamColor: { r: 0.1, g: 0.6, b: 0.4, a: 0.2 },
+			colorDiffusionCoeff: 0.0015,
+			foamReturnRate: 0.4
+		},
+		{
+			gasColor: { r: 0.9, g: 0.5, b: 0.6, a: 0.2 },
+			foamColor: { r: 0.9, g: 0.5, b: 0.6, a: 0.2 },
+			colorDiffusionCoeff: 0.0006,
+			foamReturnRate: 0.8
+		},
+		{
+			gasColor: { r: 0.3, g: 0.7, b: 0.9, a: 0.2 },
+			foamColor: { r: 0.3, g: 0.7, b: 0.9, a: 0.2 },
+			colorDiffusionCoeff: 0.0009,
+			foamReturnRate: 0.5
+		},
+		{
+			gasColor: { r: 0.9, g: 0.7, b: 0.2, a: 0.2 },
+			foamColor: { r: 0.9, g: 0.7, b: 0.2, a: 0.2 },
+			colorDiffusionCoeff: 0.0005,
+			foamReturnRate: 0.2
+		}
+	]
 
 	let currentFluidIndex = $state(0);
 	let colorPanelOpen = $state(false);
+
+	let gasColor = new Tween(gasTypes[0].gasColor, {
+		duration: 500,
+		easing: cubicOut
+	});
+	let foamColor = new Tween(gasTypes[0].foamColor, {
+		duration: 500,
+		easing: cubicOut
+	});
+	let colorDiffusionCoeff: number = $state(gasTypes[0].colorDiffusionCoeff);
+	let foamReturnRate: number = $state(gasTypes[0].foamReturnRate);
 
 	function toCSS(c: { r: number; g: number; b: number }) {
 		return `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`;
@@ -57,6 +120,7 @@
 
 	let angle: number | undefined = $state(0);
 	let gravity: { x: number; y: number } = $state({ x: 0, y: -MAX_GRAVITY });
+	let gasGravity: { x: number; y: number } = $state({ x: 0, y: MAX_GAS_GRAVITY });
 
 	let appState: AppState = $state('loading');
 
@@ -229,7 +293,12 @@
 	{:else}
 		<FluidSimulation
 			{gravity}
+			{gasGravity}
 			fluidColor={fluidTypes[currentFluidIndex].fluidColor}
+			gasColor={gasColor.current}
+			foamColor={foamColor.current}
+			{colorDiffusionCoeff}
+			{foamReturnRate}
 		/>
 
 		<!-- Color picker panel -->

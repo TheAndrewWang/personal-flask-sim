@@ -6,4 +6,5 @@
 	height: 100%;
 	overflow: hidden;
 	overscroll-behavior: none;
+    overscroll-behavior-y: none;
 }

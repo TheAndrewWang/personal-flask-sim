@@ -148,70 +148,99 @@
 		animationId = requestAnimationFrame(update);
 	}
 
-	function spawnAtPointer(event: PointerEvent) {
-        if (!fluid || !canvas) return;
+	function spawnAtClient(clientX: number, clientY: number) {
+		if (!fluid || !canvas) return;
 
-        const rect = canvas.getBoundingClientRect();
-        const nx = (event.clientX - rect.left) / rect.width;
-        const ny = (event.clientY - rect.top) / rect.height;
+		const rect = canvas.getBoundingClientRect();
+		const nx = (clientX - rect.left) / rect.width;
+		const ny = (clientY - rect.top) / rect.height;
 
-        const x = nx * simWidth;
-        const y = (1.0 - ny) * simHeight;
+		const x = nx * simWidth;
+		const y = (1.0 - ny) * simHeight;
 
-        fluid.spawnParticlesInRectangle(
-            x,
-            y,
-            clickSpawnRadius,
-            clickSpawnCount,
-            clickSpawnSpeed
-        );
-    }
+		fluid.spawnParticlesInRectangle(
+			x,
+			y,
+			clickSpawnRadius,
+			clickSpawnCount,
+			clickSpawnSpeed
+		);
+	}
 
 	onMount(() => {
 		let id: number | null = null;
+		let activePointerId: number | null = null;
+		let lastClientX = 0;
+		let lastClientY = 0;
+
+		const startSpawnLoop = () => {
+			if (id !== null) return;
+			id = window.setInterval(() => {
+				if (!isDragging || activePointerId === null) return;
+				spawnAtClient(lastClientX, lastClientY);
+			}, 50);
+		};
+
+		const stopSpawnLoop = () => {
+			if (id !== null) {
+				clearInterval(id);
+				id = null;
+			}
+		};
+
+		const stopDragging = () => {
+			isDragging = false;
+			activePointerId = null;
+			stopSpawnLoop();
+		};
 
 		const handlePointerDown = (event: PointerEvent) => {
+			stopSpawnLoop();
 			isDragging = true;
+			activePointerId = event.pointerId;
+			lastClientX = event.clientX;
+			lastClientY = event.clientY;
 			canvas.setPointerCapture(event.pointerId);
-			id = setInterval(() => {
-				spawnAtPointer(event);
-			}, 50);
-		}
+			spawnAtClient(lastClientX, lastClientY);
+			startSpawnLoop();
+		};
 		const handlePointerMove = (event: PointerEvent) => {
-			if (id !== null) {
-				clearInterval(id);
-			}
+			if (activePointerId !== event.pointerId) return;
 			if (!isDragging) return;
-			spawnAtPointer(event);
-			id = setInterval(() => {
-				spawnAtPointer(event);
-			}, 30);
-		}
+			lastClientX = event.clientX;
+			lastClientY = event.clientY;
+			spawnAtClient(lastClientX, lastClientY);
+		};
 	    const handlePointerUp = (event: PointerEvent) => {
-            isDragging = false;
-            canvas.releasePointerCapture(event.pointerId);
-			if (id !== null) {
-				clearInterval(id);
-			}
+            if (activePointerId !== event.pointerId) return;
+            stopDragging();
+            if (canvas.hasPointerCapture(event.pointerId)) {
+                canvas.releasePointerCapture(event.pointerId);
+            }
         };
 
-        const handlePointerCancel = () => {
-            isDragging = false;
-			if (id !== null) {
-				clearInterval(id);
-			}
+        const handlePointerCancel = (event: PointerEvent) => {
+            if (activePointerId !== event.pointerId) return;
+            stopDragging();
+        };
+
+        const handleLostPointerCapture = () => {
+            stopDragging();
         };
 
         canvas.addEventListener('pointerdown', handlePointerDown);
         canvas.addEventListener('pointermove', handlePointerMove);
         canvas.addEventListener('pointerup', handlePointerUp);
         canvas.addEventListener('pointercancel', handlePointerCancel);
+        canvas.addEventListener('lostpointercapture', handleLostPointerCapture);
 
         return () => {
+            stopDragging();
             canvas.removeEventListener('pointerdown', handlePointerDown);
             canvas.removeEventListener('pointermove', handlePointerMove);
             canvas.removeEventListener('pointerup', handlePointerUp);
             canvas.removeEventListener('pointercancel', handlePointerCancel);
+            canvas.removeEventListener('lostpointercapture', handleLostPointerCapture);
         };
     });
 

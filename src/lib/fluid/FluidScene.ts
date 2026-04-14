@@ -14,7 +14,7 @@ export interface SceneConfig {
 }
 
 export const DEFAULT_SCENE_CONFIG: SceneConfig = {
-    gravity: -9.81,
+    gravity: -20,
     dt: 1.0 / 120.0,
     flipRatio: 0.9,
     numPressureIters: 100,

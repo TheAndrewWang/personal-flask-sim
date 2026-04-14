@@ -36,7 +36,7 @@ export function setupFluidScene(
     foamColor?: { r: number; g: number; b: number },
     colorDiffusionCoeff: number = 0.01,
     foamReturnRate: number = 1.0,
-    particleCapacityMultiplier = 1.0
+    particleCapacityMultiplier = 2.0 // Capacity for all particiles based on init number 
 ): FlipFluid {
     const tankHeight = simHeight;
     const tankWidth = simWidth;

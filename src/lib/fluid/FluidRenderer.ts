@@ -1,5 +1,4 @@
 import type { FlipFluid } from './FlipFluid';
-import { ElementRenderer, type ElementRenderData } from '../elements/ElementRenderer';
 
 const pointVertexShader = `
 	attribute vec2 attrPosition;
@@ -26,7 +25,6 @@ const pointFragmentShader = `
 		if (fragDrawDisk == 1.0) {
 			float r2 = dot(gl_PointCoord - 0.5, gl_PointCoord - 0.5);
 			if (r2 > 0.25) discard;
-			// Add soft edge falloff for more water-like appearance
 			float alpha = 1.0 - smoothstep(0.15, 0.25, r2);
 			gl_FragColor = vec4(fragColor, alpha * 0.8);
 		} else {
@@ -58,7 +56,6 @@ const meshFragmentShader = `
 	}
 `;
 
-// Pass 1: accumulate soft particle blobs into an offscreen texture.
 const accumVertexShader = `
 	attribute vec2 attrPosition;
 	attribute vec3 attrColor;
@@ -87,7 +84,6 @@ const accumFragmentShader = `
 	}
 `;
 
-// Pass 2: threshold accumulated alpha and composite back to screen.
 const compositeVertexShader = `
 	attribute vec2 attrPosition;
 	varying vec2 vTexCoord;
@@ -102,45 +98,27 @@ const compositeFragmentShader = `
 	varying vec2 vTexCoord;
 	uniform sampler2D accumTex;
 	uniform float threshold;
-    uniform vec3 fillColor;
 	void main() {
 		vec4 accum = texture2D(accumTex, vTexCoord);
 		if (accum.a < threshold) discard;
-        gl_FragColor = vec4(fillColor, 1.0);
+		vec3 color = accum.rgb / max(accum.a, 0.0001);
+		gl_FragColor = vec4(color, 1.0);
 	}
 `;
 
 export interface RenderConfig {
     showParticles: boolean;
-    showFluid: boolean;
     showGrid: boolean;
+    showFluid: boolean;
     simWidth: number;
     simHeight: number;
-    element?: ElementRenderData;
 }
 
-type PointShaderLocations = {
-    attrPosition: number;
-    attrColor: number;
-    domainSize: WebGLUniformLocation | null;
-    pointSize: WebGLUniformLocation | null;
-    drawDisk: WebGLUniformLocation | null;
-};
-
-type AccumShaderLocations = {
-    attrPosition: number;
-    attrColor: number;
-    domainSize: WebGLUniformLocation | null;
-    radiusPx: WebGLUniformLocation | null;
-    accumScale: WebGLUniformLocation | null;
-};
-
-type CompositeShaderLocations = {
-    attrPosition: number;
-    accumTex: WebGLUniformLocation | null;
-    threshold: WebGLUniformLocation | null;
-    fillColor: WebGLUniformLocation | null;
-};
+export interface FluidSurfaceConfig {
+    influenceRadius: number;
+    accumScale: number;
+    threshold: number;
+}
 
 export class FluidRenderer {
     private gl: WebGLRenderingContext;
@@ -154,57 +132,36 @@ export class FluidRenderer {
     private gridColorBuffer: WebGLBuffer;
     private quadBuffer: WebGLBuffer;
     private gridVertBufferInitialized = false;
-    private elementRenderer: ElementRenderer;
-    private pointLocs: PointShaderLocations;
-    private accumLocs: AccumShaderLocations;
-    private compositeLocs: CompositeShaderLocations;
 
     private accumFramebuffer: WebGLFramebuffer | null = null;
     private accumTexture: WebGLTexture | null = null;
     private accumWidth = 0;
     private accumHeight = 0;
 
-    private influenceRadius = 0.22;
+    private influenceRadius = 0.1;
     private accumScale = 0.35;
-    private threshold = 0.5;
+    private threshold = 0.4;
 
     constructor(canvas: HTMLCanvasElement) {
-        const gl = canvas.getContext('webgl');
+        const gl = canvas.getContext('webgl', {
+            alpha: true,
+            antialias: true,
+            premultipliedAlpha: false
+        });
+
         if (!gl) {
             throw new Error('WebGL not supported');
         }
+
         this.gl = gl;
 
-        // Enable blending for water-like transparency effects
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         this.pointShader = this.createShader(pointVertexShader, pointFragmentShader);
-        this.elementRenderer = new ElementRenderer(gl);
         this.meshShader = this.createShader(meshVertexShader, meshFragmentShader);
         this.accumShader = this.createShader(accumVertexShader, accumFragmentShader);
         this.compositeShader = this.createShader(compositeVertexShader, compositeFragmentShader);
-
-        this.pointLocs = {
-            attrPosition: gl.getAttribLocation(this.pointShader, 'attrPosition'),
-            attrColor: gl.getAttribLocation(this.pointShader, 'attrColor'),
-            domainSize: gl.getUniformLocation(this.pointShader, 'domainSize'),
-            pointSize: gl.getUniformLocation(this.pointShader, 'pointSize'),
-            drawDisk: gl.getUniformLocation(this.pointShader, 'drawDisk')
-        };
-        this.accumLocs = {
-            attrPosition: gl.getAttribLocation(this.accumShader, 'attrPosition'),
-            attrColor: gl.getAttribLocation(this.accumShader, 'attrColor'),
-            domainSize: gl.getUniformLocation(this.accumShader, 'domainSize'),
-            radiusPx: gl.getUniformLocation(this.accumShader, 'radiusPx'),
-            accumScale: gl.getUniformLocation(this.accumShader, 'accumScale')
-        };
-        this.compositeLocs = {
-            attrPosition: gl.getAttribLocation(this.compositeShader, 'attrPosition'),
-            accumTex: gl.getUniformLocation(this.compositeShader, 'accumTex'),
-            threshold: gl.getUniformLocation(this.compositeShader, 'threshold'),
-            fillColor: gl.getUniformLocation(this.compositeShader, 'fillColor')
-        };
 
         this.pointVertexBuffer = this.createBuffer();
         this.pointColorBuffer = this.createBuffer();
@@ -215,7 +172,10 @@ export class FluidRenderer {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
         gl.bufferData(
             gl.ARRAY_BUFFER,
-            new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+            new Float32Array([
+                -1, -1, 1, -1, -1, 1,
+                -1, 1, 1, -1, 1, 1
+            ]),
             gl.STATIC_DRAW
         );
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -226,31 +186,50 @@ export class FluidRenderer {
 
         const vsShader = gl.createShader(gl.VERTEX_SHADER);
         if (!vsShader) throw new Error('Failed to create vertex shader');
+
         gl.shaderSource(vsShader, vsSource);
         gl.compileShader(vsShader);
+
         if (!gl.getShaderParameter(vsShader, gl.COMPILE_STATUS)) {
-            console.error('Vertex shader compile error:', gl.getShaderInfoLog(vsShader));
-            throw new Error('Vertex shader compilation failed');
+            const info = gl.getShaderInfoLog(vsShader) || 'Unknown vertex shader error';
+            gl.deleteShader(vsShader);
+            throw new Error(`Vertex shader compilation failed: ${info}`);
         }
 
         const fsShader = gl.createShader(gl.FRAGMENT_SHADER);
-        if (!fsShader) throw new Error('Failed to create fragment shader');
+        if (!fsShader) {
+            gl.deleteShader(vsShader);
+            throw new Error('Failed to create fragment shader');
+        }
+
         gl.shaderSource(fsShader, fsSource);
         gl.compileShader(fsShader);
+
         if (!gl.getShaderParameter(fsShader, gl.COMPILE_STATUS)) {
-            console.error('Fragment shader compile error:', gl.getShaderInfoLog(fsShader));
-            throw new Error('Fragment shader compilation failed');
+            const info = gl.getShaderInfoLog(fsShader) || 'Unknown fragment shader error';
+            gl.deleteShader(vsShader);
+            gl.deleteShader(fsShader);
+            throw new Error(`Fragment shader compilation failed: ${info}`);
         }
 
         const shader = gl.createProgram();
-        if (!shader) throw new Error('Failed to create shader program');
+        if (!shader) {
+            gl.deleteShader(vsShader);
+            gl.deleteShader(fsShader);
+            throw new Error('Failed to create shader program');
+        }
+
         gl.attachShader(shader, vsShader);
         gl.attachShader(shader, fsShader);
         gl.linkProgram(shader);
 
+        gl.deleteShader(vsShader);
+        gl.deleteShader(fsShader);
+
         if (!gl.getProgramParameter(shader, gl.LINK_STATUS)) {
-            console.error('Shader link error:', gl.getProgramInfoLog(shader));
-            throw new Error('Shader program linking failed');
+            const info = gl.getProgramInfoLog(shader) || 'Unknown shader link error';
+            gl.deleteProgram(shader);
+            throw new Error(`Shader program linking failed: ${info}`);
         }
 
         return shader;
@@ -262,63 +241,59 @@ export class FluidRenderer {
         return buffer;
     }
 
+    setSurfaceConfig(config: Partial<FluidSurfaceConfig>): void {
+        if (config.influenceRadius !== undefined) {
+            this.influenceRadius = Math.max(0.001, config.influenceRadius);
+        }
+
+        if (config.accumScale !== undefined) {
+            this.accumScale = Math.max(0.001, config.accumScale);
+        }
+
+        if (config.threshold !== undefined) {
+            this.threshold = Math.max(0.001, config.threshold);
+        }
+    }
+
+    getSurfaceConfig(): FluidSurfaceConfig {
+        return {
+            influenceRadius: this.influenceRadius,
+            accumScale: this.accumScale,
+            threshold: this.threshold
+        };
+    }
+
     render(fluid: FlipFluid, config: RenderConfig): void {
         const gl = this.gl;
 
-        gl.clearColor(0.02, 0.1, 0.2, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
         gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
         if (config.showFluid) {
             this.renderFluid(fluid, config);
         }
+
         if (config.showParticles || config.showGrid) {
             this.renderPoints(fluid, config);
-        }
-
-        if (config.element) {
-            this.elementRenderer.render({
-                simWidth: config.simWidth,
-                simHeight: config.simHeight,
-                element: config.element,
-            });
-        }
-    }
-
-    renderFluids(fluids: FlipFluid[], config: RenderConfig): void {
-        const gl = this.gl;
-
-        gl.clearColor(0.02, 0.1, 0.2, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-        for (const fluid of fluids) {
-            if (config.showFluid) {
-                this.renderFluid(fluid, config);
-            }
-            if (config.showParticles || config.showGrid) {
-                this.renderPoints(fluid, config);
-            }
-        }
-
-        if (config.element) {
-            this.elementRenderer.render({
-                simWidth: config.simWidth,
-                simHeight: config.simHeight,
-                element: config.element,
-            });
         }
     }
 
     private ensureAccumFramebuffer(width: number, height: number): void {
         const gl = this.gl;
-        if (this.accumWidth === width && this.accumHeight === height) return;
 
-        if (this.accumFramebuffer) gl.deleteFramebuffer(this.accumFramebuffer);
-        if (this.accumTexture) gl.deleteTexture(this.accumTexture);
+        if (
+            this.accumWidth === width &&
+            this.accumHeight === height &&
+            this.accumFramebuffer &&
+            this.accumTexture
+        ) {
+            return;
+        }
+
+        this.deleteAccumFramebuffer();
 
         const tex = gl.createTexture();
         if (!tex) throw new Error('Failed to create accumulation texture');
+
         gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -328,10 +303,22 @@ export class FluidRenderer {
         gl.bindTexture(gl.TEXTURE_2D, null);
 
         const fb = gl.createFramebuffer();
-        if (!fb) throw new Error('Failed to create accumulation framebuffer');
+        if (!fb) {
+            gl.deleteTexture(tex);
+            throw new Error('Failed to create accumulation framebuffer');
+        }
+
         gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            gl.deleteTexture(tex);
+            gl.deleteFramebuffer(fb);
+            throw new Error(`Framebuffer incomplete: ${status}`);
+        }
 
         this.accumTexture = tex;
         this.accumFramebuffer = fb;
@@ -339,10 +326,29 @@ export class FluidRenderer {
         this.accumHeight = height;
     }
 
+    private deleteAccumFramebuffer(): void {
+        const gl = this.gl;
+
+        if (this.accumFramebuffer) {
+            gl.deleteFramebuffer(this.accumFramebuffer);
+            this.accumFramebuffer = null;
+        }
+
+        if (this.accumTexture) {
+            gl.deleteTexture(this.accumTexture);
+            this.accumTexture = null;
+        }
+
+        this.accumWidth = 0;
+        this.accumHeight = 0;
+    }
+
     private renderFluid(fluid: FlipFluid, config: RenderConfig): void {
         const gl = this.gl;
         const w = gl.canvas.width;
         const h = gl.canvas.height;
+
+        if (fluid.numParticles === 0) return;
 
         this.ensureAccumFramebuffer(w, h);
 
@@ -350,110 +356,120 @@ export class FluidRenderer {
         gl.viewport(0, 0, w, h);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
+
         gl.blendFunc(gl.ONE, gl.ONE);
 
         gl.useProgram(this.accumShader);
-        gl.uniform2f(this.accumLocs.domainSize, config.simWidth, config.simHeight);
-        gl.uniform1f(this.accumLocs.accumScale, this.accumScale);
+        gl.uniform2f(gl.getUniformLocation(this.accumShader, 'domainSize'), config.simWidth, config.simHeight);
+        gl.uniform1f(gl.getUniformLocation(this.accumShader, 'accumScale'), this.accumScale);
 
-        const radiusPx = (this.influenceRadius / config.simWidth) * w;
-        gl.uniform1f(this.accumLocs.radiusPx, radiusPx);
+        const radiusPx = this.influenceRadius / config.simWidth * w;
+        gl.uniform1f(gl.getUniformLocation(this.accumShader, 'radiusPx'), radiusPx);
 
-        gl.enableVertexAttribArray(this.accumLocs.attrPosition);
-        gl.enableVertexAttribArray(this.accumLocs.attrColor);
+        const posLoc = gl.getAttribLocation(this.accumShader, 'attrPosition');
+        const colorLoc = gl.getAttribLocation(this.accumShader, 'attrColor');
+
+        gl.enableVertexAttribArray(posLoc);
+        gl.enableVertexAttribArray(colorLoc);
 
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pointVertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, fluid.particlePos.subarray(0, 2 * fluid.numParticles), gl.DYNAMIC_DRAW);
-        gl.vertexAttribPointer(this.accumLocs.attrPosition, 2, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pointColorBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, fluid.particleColor.subarray(0, 3 * fluid.numParticles), gl.DYNAMIC_DRAW);
-        gl.vertexAttribPointer(this.accumLocs.attrColor, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
 
         gl.drawArrays(gl.POINTS, 0, fluid.numParticles);
 
-        gl.disableVertexAttribArray(this.accumLocs.attrPosition);
-        gl.disableVertexAttribArray(this.accumLocs.attrColor);
+        gl.disableVertexAttribArray(posLoc);
+        gl.disableVertexAttribArray(colorLoc);
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, w, h);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         gl.useProgram(this.compositeShader);
-        gl.uniform1i(this.compositeLocs.accumTex, 0);
-        gl.uniform1f(this.compositeLocs.threshold, this.threshold);
-        gl.uniform3f(this.compositeLocs.fillColor, fluid.baseColor.r, fluid.baseColor.g, fluid.baseColor.b);
+        gl.uniform1i(gl.getUniformLocation(this.compositeShader, 'accumTex'), 0);
+        gl.uniform1f(gl.getUniformLocation(this.compositeShader, 'threshold'), this.threshold);
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.accumTexture);
 
-        gl.enableVertexAttribArray(this.compositeLocs.attrPosition);
+        const qPosLoc = gl.getAttribLocation(this.compositeShader, 'attrPosition');
+
+        gl.enableVertexAttribArray(qPosLoc);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-        gl.vertexAttribPointer(this.compositeLocs.attrPosition, 2, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribPointer(qPosLoc, 2, gl.FLOAT, false, 0, 0);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-        gl.disableVertexAttribArray(this.compositeLocs.attrPosition);
+        gl.disableVertexAttribArray(qPosLoc);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
         gl.bindTexture(gl.TEXTURE_2D, null);
     }
 
     private renderPoints(fluid: FlipFluid, config: RenderConfig): void {
         const gl = this.gl;
+
         gl.useProgram(this.pointShader);
-        gl.uniform2f(this.pointLocs.domainSize, config.simWidth, config.simHeight);
+        gl.uniform2f(gl.getUniformLocation(this.pointShader, 'domainSize'), config.simWidth, config.simHeight);
 
-        gl.enableVertexAttribArray(this.pointLocs.attrPosition);
-        gl.enableVertexAttribArray(this.pointLocs.attrColor);
+        const posLoc = gl.getAttribLocation(this.pointShader, 'attrPosition');
+        const colorLoc = gl.getAttribLocation(this.pointShader, 'attrColor');
 
-        // Render grid cells
+        gl.enableVertexAttribArray(posLoc);
+        gl.enableVertexAttribArray(colorLoc);
+
         if (config.showGrid) {
             const pointSize = 0.9 * fluid.h / config.simWidth * gl.canvas.width;
-            gl.uniform1f(this.pointLocs.pointSize, pointSize);
-            gl.uniform1f(this.pointLocs.drawDisk, 0.0);
+            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'pointSize'), pointSize);
+            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'drawDisk'), 0.0);
 
             if (!this.gridVertBufferInitialized) {
                 const cellCenters = new Float32Array(2 * fluid.fNumCells);
                 let p = 0;
+
                 for (let i = 0; i < fluid.fNumX; i++) {
                     for (let j = 0; j < fluid.fNumY; j++) {
                         cellCenters[p++] = (i + 0.5) * fluid.h;
                         cellCenters[p++] = (j + 0.5) * fluid.h;
                     }
                 }
+
                 gl.bindBuffer(gl.ARRAY_BUFFER, this.gridVertBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, cellCenters, gl.STATIC_DRAW);
                 this.gridVertBufferInitialized = true;
             }
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.gridVertBuffer);
-            gl.vertexAttribPointer(this.pointLocs.attrPosition, 2, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.gridColorBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, fluid.cellColor, gl.DYNAMIC_DRAW);
-            gl.vertexAttribPointer(this.pointLocs.attrColor, 3, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
 
             gl.drawArrays(gl.POINTS, 0, fluid.fNumCells);
         }
 
-        // Render particles
         if (config.showParticles) {
             const pointSize = 2.0 * fluid.particleRadius / config.simWidth * gl.canvas.width;
-            gl.uniform1f(this.pointLocs.pointSize, pointSize);
-            gl.uniform1f(this.pointLocs.drawDisk, 1.0);
+
+            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'pointSize'), pointSize);
+            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'drawDisk'), 1.0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.pointVertexBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, fluid.particlePos.subarray(0, 2 * fluid.numParticles), gl.DYNAMIC_DRAW);
-            gl.vertexAttribPointer(this.pointLocs.attrPosition, 2, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.pointColorBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, fluid.particleColor.subarray(0, 3 * fluid.numParticles), gl.DYNAMIC_DRAW);
-            gl.vertexAttribPointer(this.pointLocs.attrColor, 3, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
 
             gl.drawArrays(gl.POINTS, 0, fluid.numParticles);
         }
 
-        gl.disableVertexAttribArray(this.pointLocs.attrPosition);
-        gl.disableVertexAttribArray(this.pointLocs.attrColor);
+        gl.disableVertexAttribArray(posLoc);
+        gl.disableVertexAttribArray(colorLoc);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
 
@@ -462,7 +478,25 @@ export class FluidRenderer {
         canvas.width = width;
         canvas.height = height;
         this.gl.viewport(0, 0, width, height);
-        this.accumWidth = 0;
-        this.accumHeight = 0;
+
+        this.deleteAccumFramebuffer();
+        this.gridVertBufferInitialized = false;
+    }
+
+    dispose(): void {
+        const gl = this.gl;
+
+        this.deleteAccumFramebuffer();
+
+        gl.deleteProgram(this.pointShader);
+        gl.deleteProgram(this.meshShader);
+        gl.deleteProgram(this.accumShader);
+        gl.deleteProgram(this.compositeShader);
+
+        gl.deleteBuffer(this.pointVertexBuffer);
+        gl.deleteBuffer(this.pointColorBuffer);
+        gl.deleteBuffer(this.gridVertBuffer);
+        gl.deleteBuffer(this.gridColorBuffer);
+        gl.deleteBuffer(this.quadBuffer);
     }
 }

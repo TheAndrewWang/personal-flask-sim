@@ -37,7 +37,7 @@ export function setupFluidScene(
     colorDiffusionCoeff: number = 0.01,
     foamReturnRate: number = 1.0,
     particleCapacityMultiplier = 1.5, // Capacity for all particles based on init number
-    initialParticles = 0,
+    initialParticles = 1000,
     fluidName = 'water',
     maxParticlesOverride?: number
 ): FlipFluid {

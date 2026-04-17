@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import Smartphone from '@lucide/svelte/icons/smartphone';
+	import Wrench from '@lucide/svelte/icons/wrench';
+	import Archive from '@lucide/svelte/icons/archive';
 
 	import { onMount, onDestroy } from 'svelte';
 
@@ -36,6 +38,8 @@
 	let selectedMaterial = $state<MaterialOption>(liquidOptions[0]);
 	let materialWindowOpen = $state(false);
 	let activeTab = $state<MaterialTab>('liquids');
+	let utilitiesOpen = $state(false);
+	let deleteAtTop = $state(false);
 
 	function toCSS(c: { r: number; g: number; b: number }) {
 		return `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`;
@@ -221,9 +225,38 @@
 			{gravity}
 			fluidColor={activeFluidColor}
 			spawnMaterial={{ category: selectedMaterial.category, id: selectedMaterial.id }}
+			{deleteAtTop}
 		/>
 
-		<!-- Material picker window -->
+
+		<div class="absolute top-5 left-5 z-20 flex flex-col items-start gap-2">
+			<button
+				onclick={() => (utilitiesOpen = !utilitiesOpen)}
+				class="flex items-center gap-2 rounded-2xl bg-black/25 px-4 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur-md transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-400"
+			>
+				<Wrench class="h-4 w-4" />
+				Utilities
+			</button>
+
+			{#if utilitiesOpen}
+				<div class="mt-2 w-48 rounded-3xl bg-black/70 p-3 shadow-2xl backdrop-blur-2xl">
+					<button
+						onclick={() => (deleteAtTop = !deleteAtTop)}
+						class="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-white transition hover:bg-white/10"
+					>
+						<Archive class="h-4 w-4 text-blue-300" />
+						<div>
+							<div class="font-medium">Lid</div>
+						</div>
+						<span class="ml-auto rounded-full bg-blue-500 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white">
+							{deleteAtTop ? 'On' : 'Off'}
+						</span>
+					</button>
+				</div>
+			{/if}
+		</div>
+
+		<!-- Color picker panel -->
 		<div class="absolute top-5 right-5 z-20 flex flex-col items-center gap-2">
 			<button
 				onclick={() => (materialWindowOpen = !materialWindowOpen)}
@@ -238,7 +271,7 @@
 			</button>
 
 			{#if materialWindowOpen}
-				<div class="w-64 rounded-xl bg-black/50 p-3 backdrop-blur-md">
+				<div class="w-64 rounded-3xl bg-black/70 p-3 shadow-2xl backdrop-blur-2xl">
 					<div class="mb-3 grid grid-cols-3 gap-1">
 						<button
 							onclick={() => (activeTab = 'solids')}

@@ -11,6 +11,7 @@
 		resolution = 70,
 		fluidColor = { r: 0.09, g: 0.4, b: 1.0 },
 		spawnMaterial = { category: 'liquid', id: 'water' },
+		deleteAtTop = false,
 		onclick
 	}: {
 		gravity?: { x: number; y: number };
@@ -18,8 +19,15 @@
 		angle?: number;
 		fluidColor?: { r: number; g: number; b: number };
 		spawnMaterial?: { category: 'solid' | 'liquid' | 'gas'; id: string };
+		deleteAtTop?: boolean;
 		onclick?: () => void;
 	} = $props();
+
+	let simGravity = { x: 0, y: -9.81 };
+
+	$effect(() => {
+		simGravity = gravity;
+	});
 
 	let canvas: HTMLCanvasElement;
 	let fluids: FlipFluid[] = [];
@@ -452,9 +460,11 @@
 		};
 	});
 
+	// Watch for fluid settings changes and update fluid (supports live changes later)
 	$effect(() => {
 		for (const fluid of fluids) {
 			fluid.setFluidColor(fluidColor);
+			(fluid as any).deleteParticlesAtTop = deleteAtTop;
 		}
 	});
 </script>

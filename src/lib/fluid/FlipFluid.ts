@@ -42,6 +42,10 @@ export class FlipFluid {
     // Colors
     baseColor: { r: number; g: number; b: number };
 
+    // Top deletion controls
+    deleteParticlesAtTop: boolean;
+    topExitThreshold: number | null;
+
     // Particle grid
     particleRadius: number;
     pInvSpacing: number;
@@ -102,6 +106,8 @@ export class FlipFluid {
         this.particleVel = new Float32Array(2 * this.maxParticles);
         this.particleDensity = new Float32Array(this.fNumCells);
         this.particleRestDensity = 0.0;
+        this.deleteParticlesAtTop = false;
+        this.topExitThreshold = null;
 
         // Initialize particle grid
         this.particleRadius = particleRadius;
@@ -245,9 +251,9 @@ export class FlipFluid {
         for (let i = this.numParticles - 1; i >= 0; i--) {
             let x = this.particlePos[2 * i];
             let y = this.particlePos[2 * i + 1];
+            const topThreshold = this.topExitThreshold !== null ? this.topExitThreshold : maxY;
 
-            // Delete particles that leave through the top
-            if (y > maxY) {
+            if (this.deleteParticlesAtTop && y > topThreshold) {
                 this.removeParticle(i);
                 continue;
             }

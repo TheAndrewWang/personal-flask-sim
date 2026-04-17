@@ -46,14 +46,14 @@
 	];
 	const gasTypes = [
 		{
-			gasColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 },
-			foamColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 },
+			gasColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.1 },
+			foamColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.1 },
 			colorDiffusionCoeff: 0.0008,
 			foamReturnRate: 0.5
 		},
 		{
-			gasColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.2 },
-			foamColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.2 },
+			gasColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.1 },
+			foamColor: { r: 0.0, g: 0.7, b: 0.8, a: 0.1 },
 			colorDiffusionCoeff: 0.0012,
 			foamReturnRate: 0.6
 		},
@@ -217,6 +217,8 @@
 
 			gravity.x = MAX_GRAVITY * Math.max(-1, Math.min(1, gx));
 			gravity.y = MAX_GRAVITY * Math.max(-1, Math.min(1, gy));
+			gasGravity.x = -MAX_GAS_GRAVITY * Math.max(-1, Math.min(1, gx));
+			gasGravity.y = -MAX_GAS_GRAVITY * Math.max(-1, Math.min(1, gy));
 		}
 	};
 

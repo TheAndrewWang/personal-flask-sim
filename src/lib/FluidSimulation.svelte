@@ -13,8 +13,8 @@
 		gasGravity = { x: 0, y: 5 },
 		resolution = 70,
 		fluidColor = { r: 0.09, g: 0.4, b: 1.0 },
-		gasColor = { r: 0.09, g: 0.4, b: 1.0, a: 0.5 },
-		foamColor = { r: 0.75, g: 0.9, b: 1.0, a: 0.5 },
+		gasColor = { r: 0.09, g: 0.4, b: 1.0, a: 0.1 },
+		foamColor = { r: 0.75, g: 0.9, b: 1.0, a: 0.1 },
 		colorDiffusionCoeff = 0.0008,
 		foamReturnRate = 0.5,
 		onclick

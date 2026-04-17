@@ -145,11 +145,32 @@ export class GasRenderer {
     private influenceRadius = 0.45;  // was 0.22 — larger blobs, wispy spread
     private accumScale = 0.15;       // was 0.35 — lower peak, requires clusters to show
     private threshold = 0.25;        // was 0.5  — puffier, more volumetric edges
+    private isMobile = false;
+
+    // Cached uniform locations
+    private pointShaderUniforms: { [key: string]: WebGLUniformLocation | null } = {};
+    private accumShaderUniforms: { [key: string]: WebGLUniformLocation | null } = {};
+    private compositeShaderUniforms: { [key: string]: WebGLUniformLocation | null } = {};
+
+    // Cached attribute locations
+    private pointShaderAttribs: { [key: string]: number } = {};
+    private accumShaderAttribs: { [key: string]: number } = {};
+    private compositeShaderAttribs: { [key: string]: number } = {};
 
     constructor(canvas: HTMLCanvasElement) {
         const gl = canvas.getContext('webgl');
         if (!gl) throw new Error('WebGL not supported');
         this.gl = gl;
+
+        // Detect mobile devices
+        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+        // Adjust parameters for mobile performance
+        if (this.isMobile) {
+            this.influenceRadius = 0.15;  // Smaller blobs for faster rendering
+            this.accumScale = 0.75;       // Higher scale to reduce accumulation passes
+            this.threshold = 0.05;        // Lower threshold for more visible fluid
+        }
 
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -158,6 +179,37 @@ export class GasRenderer {
         this.meshShader = this.createShader(meshVertexShader, meshFragmentShader);
         this.accumShader = this.createShader(accumVertexShader, accumFragmentShader);
         this.compositeShader = this.createShader(compositeVertexShader, compositeFragmentShader);
+
+        // Cache uniform locations
+        this.pointShaderUniforms = {
+            domainSize: gl.getUniformLocation(this.pointShader, 'domainSize'),
+            pointSize: gl.getUniformLocation(this.pointShader, 'pointSize'),
+            drawDisk: gl.getUniformLocation(this.pointShader, 'drawDisk')
+        };
+        this.accumShaderUniforms = {
+            domainSize: gl.getUniformLocation(this.accumShader, 'domainSize'),
+            accumScale: gl.getUniformLocation(this.accumShader, 'accumScale'),
+            radiusPx: gl.getUniformLocation(this.accumShader, 'radiusPx')
+        };
+        this.compositeShaderUniforms = {
+            accumTex: gl.getUniformLocation(this.compositeShader, 'accumTex'),
+            threshold: gl.getUniformLocation(this.compositeShader, 'threshold')
+        };
+
+        // Cache attribute locations
+        this.pointShaderAttribs = {
+            attrPosition: gl.getAttribLocation(this.pointShader, 'attrPosition'),
+            attrColor: gl.getAttribLocation(this.pointShader, 'attrColor'),
+            attrAlpha: gl.getAttribLocation(this.pointShader, 'attrAlpha')
+        };
+        this.accumShaderAttribs = {
+            attrPosition: gl.getAttribLocation(this.accumShader, 'attrPosition'),
+            attrColor: gl.getAttribLocation(this.accumShader, 'attrColor'),
+            attrAlpha: gl.getAttribLocation(this.accumShader, 'attrAlpha')
+        };
+        this.compositeShaderAttribs = {
+            attrPosition: gl.getAttribLocation(this.compositeShader, 'attrPosition')
+        };
 
         this.pointVertexBuffer = this.createBuffer();
         this.pointColorBuffer = this.createBuffer();
@@ -244,24 +296,28 @@ export class GasRenderer {
         const w = gl.canvas.width;
         const h = gl.canvas.height;
 
-        this.ensureAccumFramebuffer(w, h);
+        // For mobile, use lower resolution accumulation to improve performance
+        const accumW = this.isMobile ? Math.floor(w * 0.75) : w;
+        const accumH = this.isMobile ? Math.floor(h * 0.75) : h;
+
+        this.ensureAccumFramebuffer(accumW, accumH);
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.accumFramebuffer);
-        gl.viewport(0, 0, w, h);
+        gl.viewport(0, 0, accumW, accumH);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.blendFunc(gl.ONE, gl.ONE);
 
         gl.useProgram(this.accumShader);
-        gl.uniform2f(gl.getUniformLocation(this.accumShader, 'domainSize'), config.simWidth, config.simHeight);
-        gl.uniform1f(gl.getUniformLocation(this.accumShader, 'accumScale'), this.accumScale);
+        gl.uniform2f(this.accumShaderUniforms.domainSize, config.simWidth, config.simHeight);
+        gl.uniform1f(this.accumShaderUniforms.accumScale, this.accumScale);
 
-        const radiusPx = this.influenceRadius / config.simWidth * w;
-        gl.uniform1f(gl.getUniformLocation(this.accumShader, 'radiusPx'), radiusPx);
+        const radiusPx = this.influenceRadius / config.simWidth * accumW;
+        gl.uniform1f(this.accumShaderUniforms.radiusPx, radiusPx);
 
-        const posLoc = gl.getAttribLocation(this.accumShader, 'attrPosition');
-        const colorLoc = gl.getAttribLocation(this.accumShader, 'attrColor');
-        const alphaLoc = gl.getAttribLocation(this.accumShader, 'attrAlpha');
+        const posLoc = this.accumShaderAttribs.attrPosition;
+        const colorLoc = this.accumShaderAttribs.attrColor;
+        const alphaLoc = this.accumShaderAttribs.attrAlpha;
         gl.enableVertexAttribArray(posLoc);
         gl.enableVertexAttribArray(colorLoc);
         gl.enableVertexAttribArray(alphaLoc);
@@ -285,13 +341,13 @@ export class GasRenderer {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         gl.useProgram(this.compositeShader);
-        gl.uniform1i(gl.getUniformLocation(this.compositeShader, 'accumTex'), 0);
-        gl.uniform1f(gl.getUniformLocation(this.compositeShader, 'threshold'), this.threshold);
+        gl.uniform1i(this.compositeShaderUniforms.accumTex, 0);
+        gl.uniform1f(this.compositeShaderUniforms.threshold, this.threshold);
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.accumTexture);
 
-        const qPosLoc = gl.getAttribLocation(this.compositeShader, 'attrPosition');
+        const qPosLoc = this.compositeShaderAttribs.attrPosition;
         gl.enableVertexAttribArray(qPosLoc);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
         gl.vertexAttribPointer(qPosLoc, 2, gl.FLOAT, false, 0, 0);
@@ -305,19 +361,20 @@ export class GasRenderer {
     private renderPoints(fluid: FlipGas, config: RenderConfig): void {
         const gl = this.gl;
         gl.useProgram(this.pointShader);
-        gl.uniform2f(gl.getUniformLocation(this.pointShader, 'domainSize'), config.simWidth, config.simHeight);
+        gl.uniform2f(this.pointShaderUniforms.domainSize, config.simWidth, config.simHeight);
 
-        const posLoc = gl.getAttribLocation(this.pointShader, 'attrPosition');
+        const posLoc = this.pointShaderAttribs.attrPosition;
         gl.enableVertexAttribArray(posLoc);
-        const colorLoc = gl.getAttribLocation(this.pointShader, 'attrColor');
+        const colorLoc = this.pointShaderAttribs.attrColor;
         gl.enableVertexAttribArray(colorLoc);
-        const alphaLoc = gl.getAttribLocation(this.pointShader, 'attrAlpha');
+        const alphaLoc = this.pointShaderAttribs.attrAlpha;
         gl.enableVertexAttribArray(alphaLoc);
 
         if (config.showGrid) {
-            const pointSize = 0.9 * fluid.h / config.simWidth * gl.canvas.width;
-            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'pointSize'), pointSize);
-            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'drawDisk'), 0.0);
+            const basePointSize = 0.9 * fluid.h / config.simWidth * gl.canvas.width;
+            const pointSize = this.isMobile ? basePointSize * 0.7 : basePointSize;
+            gl.uniform1f(this.pointShaderUniforms.pointSize, pointSize);
+            gl.uniform1f(this.pointShaderUniforms.drawDisk, 0.0);
 
             if (!this.gridVertBufferInitialized) {
                 const cellCenters = new Float32Array(2 * fluid.fNumCells);
@@ -344,9 +401,10 @@ export class GasRenderer {
         }
 
         if (config.showParticles) {
-            const pointSize = 2.0 * fluid.particleRadius / config.simWidth * gl.canvas.width;
-            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'pointSize'), pointSize);
-            gl.uniform1f(gl.getUniformLocation(this.pointShader, 'drawDisk'), 1.0);
+            const basePointSize = 2.0 * fluid.particleRadius / config.simWidth * gl.canvas.width;
+            const pointSize = this.isMobile ? basePointSize * 0.8 : basePointSize;
+            gl.uniform1f(this.pointShaderUniforms.pointSize, pointSize);
+            gl.uniform1f(this.pointShaderUniforms.drawDisk, 1.0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.pointVertexBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, fluid.particlePos.subarray(0, 2 * fluid.numParticles), gl.DYNAMIC_DRAW);

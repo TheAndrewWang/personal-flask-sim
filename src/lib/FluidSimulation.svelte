@@ -94,7 +94,7 @@
 		fluidTouchingElement = isFluidTouchingElement();
 	}
 
-	function isFluidTouchingElement(): boolean {
+	export function isFluidTouchingElement(): boolean {
 		if (!fluid || !solidElement) return false;
 
 		const requiredCells = Math.max(1, Math.floor(minIntersectingFluidCells));
@@ -266,6 +266,11 @@
 			fluid.setFluidColor(fluidColor);
 		}
 	});
+
+	export function getSolidElement(): Element | null {
+		return solidElement || null;
+	}
+
 </script>
 
 <canvas bind:this={canvas} class="absolute inset-0 z-10 h-full w-full"></canvas>

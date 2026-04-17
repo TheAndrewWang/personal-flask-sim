@@ -11,8 +11,20 @@
 
 	import { browser } from '$app/environment';
 	import FluidSimulation from '$lib/FluidSimulation.svelte';
+	import { computeRoute } from '@vercel/analytics';
+	export { isFluidTouchingElement } from '$lib/FluidSimulation.svelte';
+	import FluidScene from '$lib/FluidScene.ts';
 
 	const MAX_GRAVITY = 9.81;
+
+
+	const reactions = new Map([
+		[['water', 'carbon'], 'reaction1'], // Example: water reacts with carbon
+		[['acid', 'base'], 'reaction2'] // Example: acid reacts with base
+	]);
+
+
+
 
 	type AppState = 'loading' | 'needs-permission' | 'ready' | 'denied' | 'not-supported';
 
@@ -183,6 +195,46 @@
 
 	const onShake = () => {
 		currentFluidIndex = (currentFluidIndex + 1) % fluidTypes.length;
+
+		(async () => {
+			try {
+				const mod = await import('$lib/FluidSimulation.svelte');
+				const isFluidTouchingElement = (mod as any).isFluidTouchingElement;
+				const fluidTouching = typeof isFluidTouchingElement === 'function' ? isFluidTouchingElement() : false;
+				const getSolidElement = (mod as any).getSolidElement;
+				const solidElement = typeof getSolidElement === 'function' ? getSolidElement() : null;
+				// use fluidTouching as needed
+
+				if (fluidTouching) {
+					const compound: string[] = [];
+					if (solidElement && typeof solidElement.name === 'string') {
+						compound.push(solidElement.name);
+					}
+					compound.push(fluid.name);
+					
+					for (const [key, value] of reactions) {
+						if (Array.isArray(key) && key.length === compound.length) {
+							// create sorted copies to avoid mutating original keys
+							const sortedKey = [...key].sort();
+							const sortedCompound = [...compound].sort();
+							if (sortedKey.every((val, index) => val === sortedCompound[index])) {
+								fluidTypes[currentFluidIndex].fluidColor = { r: Math.random(), g: Math.random(), b: Math.random() };
+							}
+						}
+	
+					}
+	
+	
+				}
+
+
+
+
+			} catch (e) {
+				console.error('Failed to import isFluidTouchingElement from FluidSimulation:', e);
+			}
+		})();
+
 	};
 </script>
 

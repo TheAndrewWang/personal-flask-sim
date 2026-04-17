@@ -1,6 +1,8 @@
 import { FlipFluid } from './FlipFluid';
 import type { RGBColor, SolidCircle } from './fluidTypes';
 import {
+    circleContainsPoint,
+    circleIntersectsBounds,
     sanitizeColor,
     validateNonNegativeNumber,
     validatePositiveNumber,
@@ -48,6 +50,19 @@ export const DEFAULT_SCENE_CONFIG: SceneConfig = {
     damping: 1.0
 };
 
+function validateSceneConfig(config: SceneConfig): void {
+    if (!Number.isFinite(config.gravity)) {
+        throw new Error('gravity must be a finite number');
+    }
+
+    validatePositiveNumber(config.dt, 'dt');
+    validateUnitInterval(config.flipRatio, 'flipRatio');
+    validatePositiveNumber(config.numPressureIters, 'numPressureIters');
+    validateNonNegativeNumber(config.numParticleIters, 'numParticleIters');
+    validatePositiveNumber(config.overRelaxation, 'overRelaxation');
+    validateUnitInterval(config.damping, 'damping');
+}
+
 function validateSceneOptions(options: Required<Pick<
     FluidSceneOptions,
     'simWidth' | 'simHeight' | 'resolution' | 'relWaterWidth' | 'relWaterHeight' | 'colorDiffusionCoeff' | 'foamReturnRate' | 'rocks'
@@ -64,13 +79,48 @@ function validateSceneOptions(options: Required<Pick<
         throw new Error('relWaterWidth and relWaterHeight must be greater than zero');
     }
 
+    const sceneBounds = {
+        minX: 0,
+        maxX: options.simWidth,
+        minY: 0,
+        maxY: options.simHeight
+    };
+
     for (const rock of options.rocks) {
         validatePositiveNumber(rock.radius, 'rock.radius');
 
         if (!Number.isFinite(rock.x) || !Number.isFinite(rock.y)) {
             throw new Error('rock positions must be finite numbers');
         }
+
+        if (!circleIntersectsBounds(rock, sceneBounds)) {
+            throw new Error('rock must intersect the simulation bounds');
+        }
     }
+}
+
+export function normalizeSceneConfig(config: Partial<SceneConfig> = {}): SceneConfig {
+    const normalized: SceneConfig = {
+        ...DEFAULT_SCENE_CONFIG,
+        ...config
+    };
+
+    normalized.numPressureIters = Math.max(1, Math.floor(normalized.numPressureIters));
+    normalized.numParticleIters = Math.max(0, Math.floor(normalized.numParticleIters));
+
+    validateSceneConfig(normalized);
+
+    return normalized;
+}
+
+function isParticleInsideAnyRock(x: number, y: number, radius: number, rocks: SolidCircle[]): boolean {
+    for (const rock of rocks) {
+        if (circleContainsPoint(rock, x, y, radius * 1.25)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 export function setupFluidScene(
@@ -112,7 +162,8 @@ export function setupFluidScene(
 
     const numX = Math.max(1, Math.floor(usableWaterWidth / dx));
     const numY = Math.max(1, Math.floor(usableWaterHeight / dy));
-    const maxParticles = numX * numY;
+
+    const candidateParticleCount = numX * numY;
 
     const fluid = new FlipFluid(
         density,
@@ -120,14 +171,12 @@ export function setupFluidScene(
         tankHeight,
         h,
         particleRadius,
-        maxParticles,
+        candidateParticleCount,
         baseColor ? sanitizeColor(baseColor) : undefined,
         foamColor ? sanitizeColor(foamColor) : undefined,
         colorDiffusionCoeff,
         foamReturnRate
     );
-
-    fluid.numParticles = maxParticles;
 
     const totalParticleWidth = (numX - 1) * dx;
     const totalParticleHeight = (numY - 1) * dy;
@@ -135,15 +184,27 @@ export function setupFluidScene(
     const startX = (tankWidth - totalParticleWidth) / 2.0;
     const startY = (tankHeight - totalParticleHeight) / 2.0;
 
-    let p = 0;
+    let particleIndex = 0;
+
     for (let i = 0; i < numX; i++) {
         for (let j = 0; j < numY; j++) {
-            fluid.particlePos[p++] = startX + dx * i + (j % 2 === 0 ? 0.0 : particleRadius);
-            fluid.particlePos[p++] = startY + dy * j;
+            const x = startX + dx * i + (j % 2 === 0 ? 0.0 : particleRadius);
+            const y = startY + dy * j;
+
+            if (isParticleInsideAnyRock(x, y, particleRadius, rocks)) {
+                continue;
+            }
+
+            fluid.particlePos[2 * particleIndex] = x;
+            fluid.particlePos[2 * particleIndex + 1] = y;
+            particleIndex++;
         }
     }
 
+    fluid.numParticles = particleIndex;
+
     const n = fluid.fNumY;
+
     for (let i = 0; i < fluid.fNumX; i++) {
         for (let j = 0; j < fluid.fNumY; j++) {
             const isWall = i === 0 || i === fluid.fNumX - 1 || j === 0;

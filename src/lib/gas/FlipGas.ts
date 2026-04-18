@@ -1,5 +1,5 @@
 // Cell types
-export const FLUID_CELL = 0;
+export const GAS_CELL = 0;
 export const AIR_CELL = 1;
 export const SOLID_CELL = 2;
 
@@ -307,7 +307,7 @@ export class FlipGas {
             let sum = 0.0;
             let numFluidCells = 0;
             for (let i = 0; i < this.fNumCells; i++) {
-                if (this.cellType[i] === FLUID_CELL) {
+                if (this.cellType[i] === GAS_CELL) {
                     sum += d[i];
                     numFluidCells++;
                 }
@@ -344,7 +344,7 @@ export class FlipGas {
                 const yi = clamp(Math.floor(y * h1), 0, this.fNumY - 1);
                 const cellNr = xi * n + yi;
                 if (this.cellType[cellNr] === AIR_CELL) {
-                    this.cellType[cellNr] = FLUID_CELL;
+                    this.cellType[cellNr] = GAS_CELL;
                 }
             }
         }
@@ -437,7 +437,7 @@ export class FlipGas {
         for (let iter = 0; iter < numIters; iter++) {
             for (let i = 1; i < this.fNumX - 1; i++) {
                 for (let j = 1; j < this.fNumY - 1; j++) {
-                    if (this.cellType[i * n + j] !== FLUID_CELL) continue;
+                    if (this.cellType[i * n + j] !== GAS_CELL) continue;
 
                     const center = i * n + j;
                     const left = (i - 1) * n + j;
@@ -543,7 +543,7 @@ export class FlipGas {
                 this.cellColor[3 * i] = 0.5;
                 this.cellColor[3 * i + 1] = 0.5;
                 this.cellColor[3 * i + 2] = 0.5;
-            } else if (this.cellType[i] === FLUID_CELL) {
+            } else if (this.cellType[i] === GAS_CELL) {
                 let d = this.particleDensity[i];
                 if (this.particleRestDensity > 0.0) d /= this.particleRestDensity;
                 this.setSciColor(i, d, 0.0, 2.0);

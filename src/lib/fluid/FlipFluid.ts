@@ -10,7 +10,6 @@ function clamp(x: number, min: number, max: number): number {
 }
 
 export class FlipFluid {
-    name: string;
     density: number;
     fNumX: number;
     fNumY: number;
@@ -53,7 +52,6 @@ export class FlipFluid {
     cellParticleIds: Int32Array;
 
     constructor(
-        name: string,
         density: number,
         width: number,
         height: number,
@@ -62,7 +60,6 @@ export class FlipFluid {
         maxParticles: number,
         baseColor?: { r: number; g: number; b: number },
     ) {
-        this.name = name;
         this.density = density;
         this.fNumX = Math.floor(width / spacing) + 1;
         this.fNumY = Math.floor(height / spacing) + 1;

@@ -3,6 +3,8 @@
 	import Smartphone from '@lucide/svelte/icons/smartphone';
 
 	import { onMount, onDestroy } from 'svelte';
+	import { Tween } from 'svelte/motion';
+	import { cubicOut } from 'svelte/easing';
 
 	import Palette from '@lucide/svelte/icons/palette';
 	import X from '@lucide/svelte/icons/x';
@@ -15,18 +17,32 @@
 
 
 	type AppState = 'loading' | 'needs-permission' | 'ready' | 'denied' | 'not-supported';
-	type MaterialCategory = 'solid' | 'liquid' | 'gas';
-	type MaterialTab = 'solids' | 'liquids' | 'gases';
 
-	type MaterialOption = {
-		id: string;
-		label: string;
-		category: MaterialCategory;
-		fluidColor?: { r: number; g: number; b: number };
-	};
-
-	const solidOptions: MaterialOption[] = [
-		{ id: 'carbon', label: 'Carbon', category: 'solid' }
+	const fluidTypes = [
+		{
+			fluidColor: { r: 0.09, g: 0.4, b: 1.0 }
+		},
+		{
+			fluidColor: { r: 0.0, g: 0.7, b: 0.8 }
+		},
+		{
+			fluidColor: { r: 1.0, g: 0.4, b: 0.1 }
+		},
+		{
+			fluidColor: { r: 0.5, g: 0.2, b: 0.9 }
+		},
+		{
+			fluidColor: { r: 0.1, g: 0.6, b: 0.4 }
+		},
+		{
+			fluidColor: { r: 0.9, g: 0.5, b: 0.6 }
+		},
+		{
+			fluidColor: { r: 0.3, g: 0.7, b: 0.9 }
+		},
+		{
+			fluidColor: { r: 0.9, g: 0.7, b: 0.2 }
+		}
 	];
 	const gasTypes = [
 		{
@@ -79,15 +95,8 @@
 		}
 	]
 
-	const liquidOptions: MaterialOption[] = [
-		{ id: 'water', label: 'Water', category: 'liquid', fluidColor: { r: 0.09, g: 0.4, b: 1.0 } }
-	];
-
-	const gasOptions: MaterialOption[] = [];
-
-	let selectedMaterial = $state<MaterialOption>(liquidOptions[0]);
-	let materialWindowOpen = $state(false);
-	let activeTab = $state<MaterialTab>('liquids');
+	let currentFluidIndex = $state(0);
+	let colorPanelOpen = $state(false);
 
 	let gasColor = new Tween(gasTypes[0].gasColor, {
 		duration: 500,
@@ -104,11 +113,10 @@
 		return `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`;
 	}
 
-	function selectMaterial(material: MaterialOption) {
-		selectedMaterial = material;
+	function selectColor(index: number) {
+		if (index === currentFluidIndex) return;
+		currentFluidIndex = index;
 	}
-
-	const activeFluidColor = $derived(selectedMaterial.fluidColor ?? liquidOptions[0].fluidColor ?? { r: 0.09, g: 0.4, b: 1.0 });
 
 	let angle: number | undefined = $state(0);
 	let gravity: { x: number; y: number } = $state({ x: 0, y: -MAX_GRAVITY });
@@ -239,7 +247,9 @@
 		}
 	});
 
-	const onShake = () => {};
+	const onShake = () => {
+		currentFluidIndex = (currentFluidIndex + 1) % fluidTypes.length;
+	};
 </script>
 
 <div
@@ -285,74 +295,40 @@
 	{:else}
 		<FluidSimulation
 			{gravity}
-			fluidColor={activeFluidColor}
-			spawnMaterial={{ category: selectedMaterial.category, id: selectedMaterial.id }}
+			{gasGravity}
+			fluidColor={fluidTypes[currentFluidIndex].fluidColor}
+			gasColor={gasColor.current}
+			foamColor={foamColor.current}
+			{colorDiffusionCoeff}
+			{foamReturnRate}
 		/>
 
-		<!-- Material picker window -->
+		<!-- Color picker panel -->
 		<div class="absolute top-5 right-5 z-20 flex flex-col items-center gap-2">
 			<button
-				onclick={() => (materialWindowOpen = !materialWindowOpen)}
+				onclick={() => (colorPanelOpen = !colorPanelOpen)}
 				class="flex h-10 w-10 items-center justify-center rounded-full shadow-lg backdrop-blur-sm transition-colors"
-				style:background-color={materialWindowOpen ? 'rgba(255,255,255,0.2)' : toCSS(activeFluidColor)}
+				style:background-color={colorPanelOpen ? 'rgba(255,255,255,0.2)' : toCSS(fluidTypes[currentFluidIndex].fluidColor)}
 			>
-				{#if materialWindowOpen}
+				{#if colorPanelOpen}
 					<X class="h-5 w-5 text-white" />
 				{:else}
 					<Palette class="h-5 w-5 text-white drop-shadow" />
 				{/if}
 			</button>
 
-			{#if materialWindowOpen}
-				<div class="w-64 rounded-xl bg-black/50 p-3 backdrop-blur-md">
-					<div class="mb-3 grid grid-cols-3 gap-1">
+			{#if colorPanelOpen}
+				<div class="flex flex-col gap-2 rounded-xl bg-black/40 p-2 backdrop-blur-md">
+					{#each fluidTypes as fluid, i}
 						<button
-							onclick={() => (activeTab = 'solids')}
-							class={`rounded-md px-2 py-1 text-xs font-semibold text-white transition-colors ${activeTab === 'solids' ? 'bg-white/20' : 'bg-white/5'}`}
-						>Solids</button>
-						<button
-							onclick={() => (activeTab = 'liquids')}
-							class={`rounded-md px-2 py-1 text-xs font-semibold text-white transition-colors ${activeTab === 'liquids' ? 'bg-white/20' : 'bg-white/5'}`}
-						>Liquids</button>
-						<button
-							onclick={() => (activeTab = 'gases')}
-							class={`rounded-md px-2 py-1 text-xs font-semibold text-white transition-colors ${activeTab === 'gases' ? 'bg-white/20' : 'bg-white/5'}`}
-						>Gases</button>
-					</div>
-
-					{#if activeTab === 'solids'}
-						<div class="space-y-2">
-							{#each solidOptions as item}
-								<button
-									onclick={() => selectMaterial(item)}
-									class={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-white transition-colors ${selectedMaterial.id === item.id && selectedMaterial.category === item.category ? 'bg-white/20' : 'bg-white/10'}`}
-								>
-									<span>{item.label}</span>
-									<span class="text-xs text-white/70">Solid</span>
-								</button>
-							{/each}
-						</div>
-					{:else if activeTab === 'liquids'}
-						<div class="space-y-2">
-							{#each liquidOptions as item}
-								<button
-									onclick={() => selectMaterial(item)}
-									class={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-white transition-colors ${selectedMaterial.id === item.id && selectedMaterial.category === item.category ? 'bg-white/20' : 'bg-white/10'}`}
-								>
-									<span>{item.label}</span>
-									<span class="text-xs text-white/70">Liquid</span>
-								</button>
-							{/each}
-						</div>
-					{:else}
-						<div class="rounded-md bg-white/10 px-3 py-4 text-center text-sm text-white/70">
-							No gases yet.
-						</div>
-					{/if}
-
-					<div class="mt-3 rounded-md bg-white/10 px-3 py-2 text-xs text-white/80">
-						Brush: {selectedMaterial.label} ({selectedMaterial.category})
-					</div>
+							onclick={() => selectColor(i)}
+							aria-label="Select color {i + 1}"
+							class="h-8 w-8 rounded-full border-2 transition-transform hover:scale-110"
+							class:border-white={i === currentFluidIndex}
+							class:border-transparent={i !== currentFluidIndex}
+							style:background-color={toCSS(fluid.fluidColor)}
+						></button>
+					{/each}
 				</div>
 			{/if}
 		</div>

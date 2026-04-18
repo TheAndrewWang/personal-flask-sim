@@ -14,7 +14,7 @@ export interface SceneConfig {
 }
 
 export const DEFAULT_SCENE_CONFIG: SceneConfig = {
-    gravity: -20,
+    gravity: -9.81,
     dt: 1.0 / 120.0,
     flipRatio: 0.9,
     numPressureIters: 100,
@@ -36,16 +36,12 @@ export function setupFluidScene(
     foamColor?: { r: number; g: number; b: number },
     colorDiffusionCoeff: number = 0.01,
     foamReturnRate: number = 1.0,
-    particleCapacityMultiplier = 1.5, // Capacity for all particles based on init number
-    initialParticles = 1000,
-    fluidName = 'water',
-    maxParticlesOverride?: number
+    particleCapacityMultiplier = 2.0 // Capacity for all particiles based on init number 
 ): FlipFluid {
     const tankHeight = simHeight;
     const tankWidth = simWidth;
     const h = tankHeight / resolution;
     const density = 1000.0;
-    const name = fluidName;
 
     // Particle setup
     const r = 0.3 * h;
@@ -54,14 +50,11 @@ export function setupFluidScene(
 
     const numX = Math.floor((relWaterWidth * tankWidth - 2.0 * h - 2.0 * r) / dx);
     const numY = Math.floor((relWaterHeight * tankHeight - 2.0 * h - 2.0 * r) / dy);
-    const defaultMaxParticles = numX * numY * particleCapacityMultiplier;
-    const maxParticles = maxParticlesOverride !== undefined
-        ? Math.max(1, Math.floor(maxParticlesOverride))
-        : Math.max(1, Math.floor(defaultMaxParticles));
+    const initialParticles = 1000;
+    const maxParticles = numX * numY * particleCapacityMultiplier;
 
     // Create fluid
     const fluid = new FlipFluid(
-        name,
         density,
         tankWidth,
         tankHeight,
@@ -72,7 +65,7 @@ export function setupFluidScene(
     );
 
     // Create particles centered on the screen
-    fluid.numParticles = Math.max(0, Math.min(initialParticles, numX * numY));
+    fluid.numParticles = initialParticles;
 
     // Calculate total dimensions of the particle block
     const totalParticleWidth = (numX - 1) * dx;
@@ -83,15 +76,11 @@ export function setupFluidScene(
     const startY = (tankHeight - totalParticleHeight) / 2.0;
 
     let p = 0;
-    let spawned = 0;
     for (let i = 0; i < numX; i++) {
         for (let j = 0; j < numY; j++) {
-            if (spawned >= fluid.numParticles) break;
             fluid.particlePos[p++] = startX + dx * i + (j % 2 === 0 ? 0.0 : r);
             fluid.particlePos[p++] = startY + dy * j;
-            spawned++;
         }
-        if (spawned >= fluid.numParticles) break;
     }
 
     // Setup grid cells for the tank boundaries

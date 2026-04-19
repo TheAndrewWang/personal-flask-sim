@@ -5,12 +5,18 @@
 
 	import { setupFluidScene, FluidRenderer, FLUID_CELL } from '$lib/fluid';
 	import type { FlipFluid } from '$lib/fluid';
+	import { setupGasScene, GasRenderer } from '$lib/gas';
+	import type { FlipGas } from '$lib/gas';
 
 	let {
 		gravity = { x: 0, y: -9.81 },
 		resolution = 70,
 		fluidColor = { r: 0.09, g: 0.4, b: 1.0 },
 		spawnMaterial = { category: 'liquid', id: 'water' },
+		gasColor = { r: 0.7, g: 0.7, b: 0.75, a: 0.22 },
+		foamColor = { r: 0.85, g: 0.85, b: 0.9, a: 0.22 },
+		colorDiffusionCoeff = 0.001,
+		foamReturnRate = 0.6,
 		onclick
 	}: {
 		gravity?: { x: number; y: number };
@@ -18,17 +24,24 @@
 		angle?: number;
 		fluidColor?: { r: number; g: number; b: number };
 		spawnMaterial?: { category: 'solid' | 'liquid' | 'gas'; id: string };
+		gasColor?: { r: number; g: number; b: number; a: number };
+		foamColor?: { r: number; g: number; b: number; a: number };
+		colorDiffusionCoeff?: number;
+		foamReturnRate?: number;
 		onclick?: () => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
 	let fluids: FlipFluid[] = [];
+	let gases: Array<{ id: string; gas: FlipGas }> = [];
 	let renderer: FluidRenderer;
+	let gasRenderer: GasRenderer;
 	let solidElement: Element;
 	let animationId: number;
 	let isDragging = false;
 	let fluidTouchingElement = false;
 	let activeSpawnFluid: FlipFluid | null = null;
+	let activeSpawnGasId: string | null = null;
 	let maxTotalParticles = 0;
 
 	let simHeight = 3.0;
@@ -45,6 +58,7 @@
 	const showGrid = false;
 	const damping = 0.99;
 	const clickSpawnCount = 40;
+	const gasSpawnCount = 5;
 	const clickSpawnRadius = 0.12;
 	const clickSpawnSpeed = 0.0;
 
@@ -91,10 +105,31 @@
 			);
 		}
 
+		for (const { gas } of gases) {
+			// Gas is buoyant: apply negative gravity for upward float
+			gas.simulate(
+				dt,
+				-gravity.x * 0.35,
+				-gravity.y * 0.35,
+				flipRatio,
+				numPressureIters,
+				numParticleIters,
+				overRelaxation,
+				compensateDrift,
+				separateParticles,
+				damping
+			);
+		}
+
         // Every frame, check if a fluid object can be destroyed
 		fluids = fluids.filter((f) => f.numParticles > 0);
+		gases = gases.filter((g) => g.gas.numParticles > 0);
+
 		if (activeSpawnFluid && activeSpawnFluid.numParticles <= 0) {
 			activeSpawnFluid = null;
+		}
+		if (activeSpawnGasId && !gases.find((g) => g.id === activeSpawnGasId)) {
+			activeSpawnGasId = null;
 		}
 
 		resolveInterFluidCollisions(interFluidCollisionIters);
@@ -206,6 +241,16 @@
 				isTouching: fluidTouchingElement
 			}
 		});
+
+		for (const { gas } of gases) {
+			gasRenderer.render(gas, {
+				showFluid: true,
+				showParticles: false,
+				showGrid: false,
+				simWidth,
+				simHeight
+			});
+		}
 	}
 
 	function update() {
@@ -257,6 +302,28 @@
 		return createSpawnFluid(liquidId);
 	}
 
+	function createSpawnGas(gasId: string): FlipGas {
+		const gas = setupGasScene(
+			simWidth,
+			simHeight,
+			resolution,
+			relWaterWidth,
+			relWaterHeight,
+			gasColor,
+			foamColor,
+			colorDiffusionCoeff,
+			foamReturnRate
+		);
+		gases = [...gases, { id: gasId, gas }];
+		return gas;
+	}
+
+	function getOrCreateSpawnGas(gasId: string): FlipGas {
+		const existing = gases.find((g) => g.id === gasId);
+		if (existing) return existing.gas;
+		return createSpawnGas(gasId);
+	}
+
     // Fluid spawning at pointer function
 	function spawnAtClient(clientX: number, clientY: number) {
 		if (!canvas) return;
@@ -273,7 +340,14 @@
 			return;
 		}
 
-		if (spawnMaterial.category === 'gas') return;
+		if (spawnMaterial.category === 'gas') {
+			if (!activeSpawnGasId || activeSpawnGasId !== spawnMaterial.id) {
+				activeSpawnGasId = spawnMaterial.id;
+			}
+			const gas = getOrCreateSpawnGas(spawnMaterial.id);
+			gas.addNewParticles(gasSpawnCount, x, y);
+			return;
+		}
 
 		if (!activeSpawnFluid) {
 			activeSpawnFluid = getOrCreateSpawnFluid(spawnMaterial.id);
@@ -423,6 +497,7 @@
 		maxTotalParticles = baseFluid.maxParticles;
 		fluids = [baseFluid];
 		renderer = new FluidRenderer(canvas);
+		gasRenderer = new GasRenderer(canvas);
 		solidElement = new Element(
 			'block',
 			1.0,
@@ -455,6 +530,12 @@
 	$effect(() => {
 		for (const fluid of fluids) {
 			fluid.setFluidColor(fluidColor);
+		}
+		for (const { gas } of gases) {
+			gas.setFluidColor(gasColor);
+			gas.setFoamColor(foamColor);
+			gas.setColorDiffusionCoeff(colorDiffusionCoeff);
+			gas.setFoamReturnRate(foamReturnRate);
 		}
 	});
 </script>

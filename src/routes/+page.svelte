@@ -21,6 +21,8 @@
 		label: string;
 		category: MaterialCategory;
 		fluidColor?: { r: number; g: number; b: number };
+		gasColor?: { r: number; g: number; b: number; a: number };
+		foamColor?: { r: number; g: number; b: number; a: number };
 	};
 
 	const solidOptions: MaterialOption[] = [
@@ -31,11 +33,26 @@
 		{ id: 'water', label: 'Water', category: 'liquid', fluidColor: { r: 0.09, g: 0.4, b: 1.0 } }
 	];
 
-	const gasOptions: MaterialOption[] = [];
+	const gasOptions: MaterialOption[] = [
+		{
+			id: 'steam',
+			label: 'Steam',
+			category: 'gas',
+			gasColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 },
+			foamColor: { r: 0.5, g: 0.5, b: 0.5, a: 0.2 }
+		}
+	];
 
 	let selectedMaterial = $state<MaterialOption>(liquidOptions[0]);
 	let materialWindowOpen = $state(false);
 	let activeTab = $state<MaterialTab>('liquids');
+
+	const defaultFluidColor = { r: 0.09, g: 0.4, b: 1.0 };
+	const defaultGasColor = { r: 0.7, g: 0.7, b: 0.75, a: 0.22 };
+	const defaultFoamColor = { r: 0.85, g: 0.85, b: 0.9, a: 0 };
+
+	let currentFluidColor = defaultFluidColor;
+	let currentGasColor = defaultGasColor;
 
 	function toCSS(c: { r: number; g: number; b: number }) {
 		return `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`;
@@ -43,9 +60,27 @@
 
 	function selectMaterial(material: MaterialOption) {
 		selectedMaterial = material;
+		if (selectedMaterial.category == 'liquid') {
+			currentFluidColor = selectedMaterial.fluidColor ?? defaultFluidColor;
+		}
+		if (selectedMaterial.category == 'gas') {
+			currentGasColor = selectedMaterial.gasColor ?? defaultGasColor;
+		}
 	}
 
-	const activeFluidColor = $derived(selectedMaterial.fluidColor ?? liquidOptions[0].fluidColor ?? { r: 0.09, g: 0.4, b: 1.0 });
+	const activeFluidColor = $derived(currentFluidColor ?? defaultFluidColor);
+	const activeGasColor = $derived(currentGasColor ?? defaultGasColor);
+	const activeFoamColor = $derived(defaultFoamColor);
+	const activePreviewColor = $derived(
+		selectedMaterial.fluidColor ??
+			(selectedMaterial.gasColor
+				? {
+						r: selectedMaterial.gasColor.r,
+						g: selectedMaterial.gasColor.g,
+						b: selectedMaterial.gasColor.b
+					}
+				: defaultFluidColor)
+	);
 
 	let angle: number | undefined = $state(0);
 	let gravity: { x: number; y: number } = $state({ x: 0, y: -MAX_GRAVITY });
@@ -220,6 +255,8 @@
 		<FluidSimulation
 			{gravity}
 			fluidColor={activeFluidColor}
+			gasColor={activeGasColor}
+			foamColor={activeFoamColor}
 			spawnMaterial={{ category: selectedMaterial.category, id: selectedMaterial.id }}
 		/>
 
@@ -228,7 +265,7 @@
 			<button
 				onclick={() => (materialWindowOpen = !materialWindowOpen)}
 				class="flex h-10 w-10 items-center justify-center rounded-full shadow-lg backdrop-blur-sm transition-colors"
-				style:background-color={materialWindowOpen ? 'rgba(255,255,255,0.2)' : toCSS(activeFluidColor)}
+				style:background-color={materialWindowOpen ? 'rgba(255,255,255,0.2)' : toCSS(activePreviewColor)}
 			>
 				{#if materialWindowOpen}
 					<X class="h-5 w-5 text-white" />
@@ -279,8 +316,16 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="rounded-md bg-white/10 px-3 py-4 text-center text-sm text-white/70">
-							No gases yet.
+						<div class="space-y-2">
+							{#each gasOptions as item}
+								<button
+									onclick={() => selectMaterial(item)}
+									class={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-white transition-colors ${selectedMaterial.id === item.id && selectedMaterial.category === item.category ? 'bg-white/20' : 'bg-white/10'}`}
+								>
+									<span>{item.label}</span>
+									<span class="text-xs text-white/70">Gas</span>
+								</button>
+							{/each}
 						</div>
 					{/if}
 

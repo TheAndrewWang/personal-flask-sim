@@ -145,7 +145,6 @@ export class GasRenderer {
     private influenceRadius = 0.45;  // was 0.22 — larger blobs, wispy spread
     private accumScale = 0.15;       // was 0.35 — lower peak, requires clusters to show
     private threshold = 0.25;        // was 0.5  — puffier, more volumetric edges
-    private isMobile = false;
 
     // Cached uniform locations
     private pointShaderUniforms: { [key: string]: WebGLUniformLocation | null } = {};
@@ -161,16 +160,6 @@ export class GasRenderer {
         const gl = canvas.getContext('webgl');
         if (!gl) throw new Error('WebGL not supported');
         this.gl = gl;
-
-        // Detect mobile devices
-        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-
-        // Adjust parameters for mobile performance
-        if (this.isMobile) {
-            this.influenceRadius = 0.15;  // Smaller blobs for faster rendering
-            this.accumScale = 0.75;       // Higher scale to reduce accumulation passes
-            this.threshold = 0.05;        // Lower threshold for more visible fluid
-        }
 
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -296,14 +285,10 @@ export class GasRenderer {
         const w = gl.canvas.width;
         const h = gl.canvas.height;
 
-        // For mobile, use lower resolution accumulation to improve performance
-        const accumW = this.isMobile ? Math.floor(w * 0.75) : w;
-        const accumH = this.isMobile ? Math.floor(h * 0.75) : h;
-
-        this.ensureAccumFramebuffer(accumW, accumH);
+        this.ensureAccumFramebuffer(w, h);
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.accumFramebuffer);
-        gl.viewport(0, 0, accumW, accumH);
+        gl.viewport(0, 0, w, h);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.blendFunc(gl.ONE, gl.ONE);
@@ -312,7 +297,7 @@ export class GasRenderer {
         gl.uniform2f(this.accumShaderUniforms.domainSize, config.simWidth, config.simHeight);
         gl.uniform1f(this.accumShaderUniforms.accumScale, this.accumScale);
 
-        const radiusPx = this.influenceRadius / config.simWidth * accumW;
+        const radiusPx = this.influenceRadius / config.simWidth * w;
         gl.uniform1f(this.accumShaderUniforms.radiusPx, radiusPx);
 
         const posLoc = this.accumShaderAttribs.attrPosition;
@@ -371,8 +356,7 @@ export class GasRenderer {
         gl.enableVertexAttribArray(alphaLoc);
 
         if (config.showGrid) {
-            const basePointSize = 0.9 * fluid.h / config.simWidth * gl.canvas.width;
-            const pointSize = this.isMobile ? basePointSize * 0.7 : basePointSize;
+            const pointSize = 0.9 * fluid.h / config.simWidth * gl.canvas.width;
             gl.uniform1f(this.pointShaderUniforms.pointSize, pointSize);
             gl.uniform1f(this.pointShaderUniforms.drawDisk, 0.0);
 
@@ -401,8 +385,7 @@ export class GasRenderer {
         }
 
         if (config.showParticles) {
-            const basePointSize = 2.0 * fluid.particleRadius / config.simWidth * gl.canvas.width;
-            const pointSize = this.isMobile ? basePointSize * 0.8 : basePointSize;
+            const pointSize = 2.0 * fluid.particleRadius / config.simWidth * gl.canvas.width;
             gl.uniform1f(this.pointShaderUniforms.pointSize, pointSize);
             gl.uniform1f(this.pointShaderUniforms.drawDisk, 1.0);
 

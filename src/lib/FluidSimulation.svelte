@@ -12,6 +12,7 @@
 		gravity = { x: 0, y: -9.81 },
 		resolution = 70,
 		fluidColor = { r: 0.09, g: 0.4, b: 1.0 },
+		showLiquidParticles = false,
 		spawnMaterial = { category: 'liquid', id: 'water' },
 		gasColor = { r: 0.7, g: 0.7, b: 0.75, a: 0.22 },
 		foamColor = { r: 0.85, g: 0.85, b: 0.9, a: 0.22 },
@@ -23,6 +24,7 @@
 		resolution?: number;
 		angle?: number;
 		fluidColor?: { r: number; g: number; b: number };
+		showLiquidParticles?: boolean;
 		spawnMaterial?: { category: 'solid' | 'liquid' | 'gas'; id: string };
 		gasColor?: { r: number; g: number; b: number; a: number };
 		foamColor?: { r: number; g: number; b: number; a: number };
@@ -54,7 +56,6 @@
 	const overRelaxation = 1.7;
 	const compensateDrift = true;
 	const separateParticles = true;
-	const showParticles = true;
 	const showGrid = false;
 	const damping = 0.99;
 	const clickSpawnCount = 40;
@@ -140,7 +141,7 @@
 		const halfH = solidElement.getHeight() * 0.5;
 		solidElement.confineToBounds(halfW, simWidth - halfW, halfH, simHeight - halfH);
 
-		fluidTouchingElement = isFluidTouchingElement();
+		fluidTouchingElement = fluids.some((fluid) => isFluidTouchingElement(fluid, solidElement));
 	}
 
 	function getTotalParticles(): number {
@@ -193,30 +194,26 @@
 		}
 	}
 
-	function isFluidTouchingElement(): boolean {
-		if (!solidElement || fluids.length === 0) return false;
-
+	function isFluidTouchingElement(fluid: FlipFluid, element: Element): boolean {
 		const requiredCells = Math.max(1, Math.floor(minIntersectingFluidCells));
-		const halfW = solidElement.getWidth() * 0.5;
-		const halfH = solidElement.getHeight() * 0.5;
-		const minX = Math.max(0.0, solidElement.getX() - halfW);
-		const maxX = Math.min(simWidth, solidElement.getX() + halfW);
-		const minY = Math.max(0.0, solidElement.getY() - halfH);
-		const maxY = Math.min(simHeight, solidElement.getY() + halfH);
+		const halfW = element.getWidth() * 0.5;
+		const halfH = element.getHeight() * 0.5;
+		const minX = Math.max(0.0, element.getX() - halfW);
+		const maxX = Math.min(simWidth, element.getX() + halfW);
+		const minY = Math.max(0.0, element.getY() - halfH);
+		const maxY = Math.min(simHeight, element.getY() + halfH);
 
 		let fluidCellCount = 0;
-		for (const fluid of fluids) {
-			const x0 = Math.max(0, Math.floor(minX * fluid.fInvSpacing));
-			const x1 = Math.min(fluid.fNumX - 1, Math.floor(maxX * fluid.fInvSpacing));
-			const y0 = Math.max(0, Math.floor(minY * fluid.fInvSpacing));
-			const y1 = Math.min(fluid.fNumY - 1, Math.floor(maxY * fluid.fInvSpacing));
+		const x0 = Math.max(0, Math.floor(minX * fluid.fInvSpacing));
+		const x1 = Math.min(fluid.fNumX - 1, Math.floor(maxX * fluid.fInvSpacing));
+		const y0 = Math.max(0, Math.floor(minY * fluid.fInvSpacing));
+		const y1 = Math.min(fluid.fNumY - 1, Math.floor(maxY * fluid.fInvSpacing));
 
-			for (let xi = x0; xi <= x1; xi++) {
-				for (let yi = y0; yi <= y1; yi++) {
-					if (fluid.cellType[xi * fluid.fNumY + yi] === FLUID_CELL) {
-						fluidCellCount++;
-						if (fluidCellCount >= requiredCells) return true;
-					}
+		for (let xi = x0; xi <= x1; xi++) {
+			for (let yi = y0; yi <= y1; yi++) {
+				if (fluid.cellType[xi * fluid.fNumY + yi] === FLUID_CELL) {
+					fluidCellCount++;
+					if (fluidCellCount >= requiredCells) return true;
 				}
 			}
 		}
@@ -228,7 +225,8 @@
 		if (!renderer || !solidElement) return;
 
 		renderer.renderFluids(fluids, {
-			showParticles,
+			showFluid: true,
+			showParticles: showLiquidParticles,
 			showGrid,
 			simWidth,
 			simHeight,

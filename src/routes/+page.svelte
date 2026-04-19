@@ -46,6 +46,7 @@
 	let selectedMaterial = $state<MaterialOption>(liquidOptions[0]);
 	let materialWindowOpen = $state(false);
 	let activeTab = $state<MaterialTab>('liquids');
+	let showLiquidParticles = $state(false);
 
 	const defaultFluidColor = { r: 0.09, g: 0.4, b: 1.0 };
 	const defaultGasColor = { r: 0.7, g: 0.7, b: 0.75, a: 0.22 };
@@ -255,6 +256,7 @@
 		<FluidSimulation
 			{gravity}
 			fluidColor={activeFluidColor}
+			{showLiquidParticles}
 			gasColor={activeGasColor}
 			foamColor={activeFoamColor}
 			spawnMaterial={{ category: selectedMaterial.category, id: selectedMaterial.id }}
@@ -276,6 +278,14 @@
 
 			{#if materialWindowOpen}
 				<div class="w-64 rounded-xl bg-black/50 p-3 backdrop-blur-md">
+					<button
+						onclick={() => (showLiquidParticles = !showLiquidParticles)}
+						class="mb-3 flex w-full items-center justify-between rounded-md bg-white/10 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/20"
+					>
+						<span>Show Liquid Particles</span>
+						<span>{showLiquidParticles ? 'ON' : 'OFF'}</span>
+					</button>
+
 					<div class="mb-3 grid grid-cols-3 gap-1">
 						<button
 							onclick={() => (activeTab = 'solids')}

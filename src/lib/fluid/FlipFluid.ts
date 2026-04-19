@@ -117,6 +117,10 @@ export class FlipFluid {
         this.numParticles = 0;
     }
 
+    public getName(): string {
+        return this.name;
+    }
+
     integrateParticles(dt: number, gravityX: number, gravityY: number, damping: number): void {
         for (let i = 0; i < this.numParticles; i++) {
             // Apply gravity

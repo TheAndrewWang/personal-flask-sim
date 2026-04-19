@@ -375,7 +375,7 @@
 			id = window.setInterval(() => {
 				if (!isDragging && !touchDragging) return;
 				spawnAtClient(lastClientX, lastClientY);
-			}, 50);
+			}, 100);
 		};
 
 		const stopSpawnLoop = () => {

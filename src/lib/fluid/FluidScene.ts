@@ -36,7 +36,7 @@ export function setupFluidScene(
     foamColor?: { r: number; g: number; b: number },
     colorDiffusionCoeff: number = 0.01,
     foamReturnRate: number = 1.0,
-    particleCapacityMultiplier = 1.5, // Capacity for all particles based on init number
+    particleCapacityMultiplier = 1.0, // Capacity for all particles based on init number
     initialParticles = 1000,
     fluidName = 'water',
     maxParticlesOverride?: number

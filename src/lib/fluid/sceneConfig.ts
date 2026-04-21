@@ -4,6 +4,7 @@ import {
     circleContainsPoint,
     circleIntersectsBounds,
     sanitizeColor,
+    scaleCircle,
     validateNonNegativeNumber,
     validatePositiveNumber,
     validateUnitInterval
@@ -34,6 +35,23 @@ export interface FluidSceneOptions {
     colorDiffusionCoeff?: number;
     foamReturnRate?: number;
     rocks?: SolidCircle[];
+    rocksAreRelative?: boolean;
+    particleJitter?: number;
+}
+
+export interface NormalizedFluidSceneOptions {
+    simWidth: number;
+    simHeight: number;
+    resolution: number;
+    relWaterWidth: number;
+    relWaterHeight: number;
+    baseColor?: RGBColor;
+    foamColor?: RGBColor;
+    colorDiffusionCoeff: number;
+    foamReturnRate: number;
+    rocks: SolidCircle[];
+    rocksAreRelative: boolean;
+    particleJitter: number;
 }
 
 export const DEFAULT_SCENE_CONFIG: SceneConfig = {
@@ -63,10 +81,7 @@ function validateSceneConfig(config: SceneConfig): void {
     validateUnitInterval(config.damping, 'damping');
 }
 
-function validateSceneOptions(options: Required<Pick<
-    FluidSceneOptions,
-    'simWidth' | 'simHeight' | 'resolution' | 'relWaterWidth' | 'relWaterHeight' | 'colorDiffusionCoeff' | 'foamReturnRate' | 'rocks'
->>): void {
+function validateSceneOptions(options: NormalizedFluidSceneOptions): void {
     validatePositiveNumber(options.simWidth, 'simWidth');
     validatePositiveNumber(options.simHeight, 'simHeight');
     validatePositiveNumber(options.resolution, 'resolution');
@@ -74,6 +89,7 @@ function validateSceneOptions(options: Required<Pick<
     validateUnitInterval(options.relWaterHeight, 'relWaterHeight');
     validateUnitInterval(options.colorDiffusionCoeff, 'colorDiffusionCoeff');
     validateNonNegativeNumber(options.foamReturnRate, 'foamReturnRate');
+    validateUnitInterval(options.particleJitter, 'particleJitter');
 
     if (options.relWaterWidth === 0 || options.relWaterHeight === 0) {
         throw new Error('relWaterWidth and relWaterHeight must be greater than zero');
@@ -113,6 +129,34 @@ export function normalizeSceneConfig(config: Partial<SceneConfig> = {}): SceneCo
     return normalized;
 }
 
+export function normalizeFluidSceneOptions(options: FluidSceneOptions): NormalizedFluidSceneOptions {
+    const normalized: NormalizedFluidSceneOptions = {
+        simWidth: options.simWidth,
+        simHeight: options.simHeight,
+        resolution: options.resolution ?? 100,
+        relWaterWidth: options.relWaterWidth ?? 0.6,
+        relWaterHeight: options.relWaterHeight ?? 0.8,
+        baseColor: options.baseColor ? sanitizeColor(options.baseColor) : undefined,
+        foamColor: options.foamColor ? sanitizeColor(options.foamColor) : undefined,
+        colorDiffusionCoeff: options.colorDiffusionCoeff ?? 0.01,
+        foamReturnRate: options.foamReturnRate ?? 1.0,
+        rocks: options.rocks?.map((rock) => ({ ...rock })) || [],
+        rocksAreRelative: options.rocksAreRelative ?? false,
+        particleJitter: options.particleJitter ?? 0
+    };
+
+    if (normalized.rocksAreRelative) {
+        normalized.rocks = normalized.rocks.map((rock) =>
+            scaleCircle(rock, normalized.simWidth, normalized.simHeight)
+        );
+        normalized.rocksAreRelative = false;
+    }
+
+    validateSceneOptions(normalized);
+
+    return normalized;
+}
+
 function isParticleInsideAnyRock(x: number, y: number, radius: number, rocks: SolidCircle[]): boolean {
     for (const rock of rocks) {
         if (circleContainsPoint(rock, x, y, radius * 1.25)) {
@@ -121,6 +165,23 @@ function isParticleInsideAnyRock(x: number, y: number, radius: number, rocks: So
     }
 
     return false;
+}
+
+function deterministicJitter(i: number, j: number, amount: number): { x: number; y: number } {
+    if (amount <= 0) {
+        return { x: 0, y: 0 };
+    }
+
+    const seed = Math.sin(i * 127.1 + j * 311.7) * 43758.5453123;
+    const frac = seed - Math.floor(seed);
+
+    const seed2 = Math.sin(i * 269.5 + j * 183.3) * 24634.6345;
+    const frac2 = seed2 - Math.floor(seed2);
+
+    return {
+        x: (frac - 0.5) * amount,
+        y: (frac2 - 0.5) * amount
+    };
 }
 
 export function setupFluidScene(
@@ -135,30 +196,34 @@ export function setupFluidScene(
     foamReturnRate = 1.0,
     rocks: SolidCircle[] = []
 ): FlipFluid {
-    const options = {
+    return setupFluidSceneFromOptions({
         simWidth,
         simHeight,
         resolution,
         relWaterWidth,
         relWaterHeight,
+        baseColor,
+        foamColor,
         colorDiffusionCoeff,
         foamReturnRate,
         rocks
-    };
+    });
+}
 
-    validateSceneOptions(options);
+export function setupFluidSceneFromOptions(options: FluidSceneOptions): FlipFluid {
+    const normalized = normalizeFluidSceneOptions(options);
 
-    const tankHeight = simHeight;
-    const tankWidth = simWidth;
-    const h = tankHeight / resolution;
+    const tankHeight = normalized.simHeight;
+    const tankWidth = normalized.simWidth;
+    const h = tankHeight / normalized.resolution;
     const density = 1000.0;
 
     const particleRadius = 0.3 * h;
     const dx = 2.0 * particleRadius;
     const dy = Math.sqrt(3.0) / 2.0 * dx;
 
-    const usableWaterWidth = relWaterWidth * tankWidth - 2.0 * h - 2.0 * particleRadius;
-    const usableWaterHeight = relWaterHeight * tankHeight - 2.0 * h - 2.0 * particleRadius;
+    const usableWaterWidth = normalized.relWaterWidth * tankWidth - 2.0 * h - 2.0 * particleRadius;
+    const usableWaterHeight = normalized.relWaterHeight * tankHeight - 2.0 * h - 2.0 * particleRadius;
 
     const numX = Math.max(1, Math.floor(usableWaterWidth / dx));
     const numY = Math.max(1, Math.floor(usableWaterHeight / dy));
@@ -172,10 +237,10 @@ export function setupFluidScene(
         h,
         particleRadius,
         candidateParticleCount,
-        baseColor ? sanitizeColor(baseColor) : undefined,
-        foamColor ? sanitizeColor(foamColor) : undefined,
-        colorDiffusionCoeff,
-        foamReturnRate
+        normalized.baseColor,
+        normalized.foamColor,
+        normalized.colorDiffusionCoeff,
+        normalized.foamReturnRate
     );
 
     const totalParticleWidth = (numX - 1) * dx;
@@ -188,10 +253,11 @@ export function setupFluidScene(
 
     for (let i = 0; i < numX; i++) {
         for (let j = 0; j < numY; j++) {
-            const x = startX + dx * i + (j % 2 === 0 ? 0.0 : particleRadius);
-            const y = startY + dy * j;
+            const jitter = deterministicJitter(i, j, normalized.particleJitter * particleRadius);
+            const x = startX + dx * i + (j % 2 === 0 ? 0.0 : particleRadius) + jitter.x;
+            const y = startY + dy * j + jitter.y;
 
-            if (isParticleInsideAnyRock(x, y, particleRadius, rocks)) {
+            if (isParticleInsideAnyRock(x, y, particleRadius, normalized.rocks)) {
                 continue;
             }
 
@@ -212,7 +278,7 @@ export function setupFluidScene(
         }
     }
 
-    for (const rock of rocks) {
+    for (const rock of normalized.rocks) {
         fluid.addSolidCircle(rock.x, rock.y, rock.radius);
     }
 
@@ -224,19 +290,4 @@ export function setupFluidScene(
     }
 
     return fluid;
-}
-
-export function setupFluidSceneFromOptions(options: FluidSceneOptions): FlipFluid {
-    return setupFluidScene(
-        options.simWidth,
-        options.simHeight,
-        options.resolution,
-        options.relWaterWidth,
-        options.relWaterHeight,
-        options.baseColor,
-        options.foamColor,
-        options.colorDiffusionCoeff,
-        options.foamReturnRate,
-        options.rocks
-    );
 }
